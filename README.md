@@ -15,13 +15,7 @@ Real-time collaborative whiteboard with Google sign-in, saved boards, voice/vide
 ---
 
 ## 📸 Preview
-
-### Light Theme
-![Aerix Light Theme](./frontend/public/Snapshots%20and%20Project%20Demonstration/Screenshot%202026-04-28%20173751.png)
-
-### Dark Theme
-![Aerix Dark Theme](./frontend/public/Snapshots%20and%20Project%20Demonstration/Screenshot%202026-04-28%20173901.png)
-
+ 
 ---
 
 ## ✨ Key Features
