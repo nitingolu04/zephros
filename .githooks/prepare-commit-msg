@@ -1,0 +1,2 @@
+#!/bin/sh
+node -e "const fs=require('fs');const p=process.argv[1];fs.writeFileSync(p,fs.readFileSync(p,'utf8').split(/\r?\n/).filter(l=>!l.includes('cursoragent@cursor.com')).join('\n'));" "$1"
