@@ -266,6 +266,8 @@ export type ToolType = 'select' | 'hand' | 'pen' | 'rectangle' | 'circle' | 'lin
 
 export type PenMode = 'pen' | 'highlighter' | 'marker'
 
+export type ShapeToolType = 'rectangle' | 'circle' | 'line' | 'arrow'
+
 
 
 /* ── Theme ── */

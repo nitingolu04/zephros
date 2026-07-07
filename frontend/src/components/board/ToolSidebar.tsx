@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   MousePointer2, Hand, Pencil, Highlighter, PenLine, Square, Circle, Minus,
   ArrowUpRight, Type, StickyNote, Eraser, Crosshair, Smile, Frame,
-  Undo2, Redo2, Plus, Sparkles, Lasso,
+  Undo2, Redo2, Plus, Sparkles, Lasso, Shapes, ChevronRight, MoreHorizontal,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useBoardStore } from '@/stores/boardStore'
@@ -11,21 +11,20 @@ import { socketService } from '@/services/socket'
 import { createImageElement, createElementsFromPdf } from '@/lib/canvasImport'
 import type { ToolType, PenMode } from '@/types'
 
-const mainTools: { type: ToolType; icon: typeof MousePointer2; label: string; shortcut: string }[] = [
-  { type: 'select', icon: MousePointer2, label: 'Select', shortcut: 'V' },
-  { type: 'hand', icon: Hand, label: 'Pan', shortcut: 'H' },
+const shapeTools: { type: ToolType; icon: typeof Square; label: string; shortcut: string }[] = [
   { type: 'rectangle', icon: Square, label: 'Rectangle', shortcut: 'R' },
   { type: 'circle', icon: Circle, label: 'Circle', shortcut: 'C' },
   { type: 'line', icon: Minus, label: 'Line', shortcut: 'L' },
-  { type: 'arrow', icon: ArrowUpRight, label: 'Arrow', shortcut: 'A' },
-  { type: 'text', icon: Type, label: 'Text', shortcut: 'T' },
-  { type: 'sticky', icon: StickyNote, label: 'Sticky Note', shortcut: 'S' },
-  { type: 'pen', icon: Pencil, label: 'Draw', shortcut: 'P' },
-  { type: 'frame', icon: Frame, label: 'Frame', shortcut: 'F' },
-  { type: 'eraser', icon: Eraser, label: 'Eraser', shortcut: 'E' },
+  { type: 'arrow', icon: ArrowUpRight, label: 'Arrow', shortcut: 'Shift+A' },
 ]
 
-const extraTools: { type: ToolType; icon: typeof Crosshair; label: string }[] = [
+const noteTools: { type: ToolType; icon: typeof Type; label: string; shortcut: string }[] = [
+  { type: 'text', icon: Type, label: 'Text', shortcut: 'T' },
+  { type: 'sticky', icon: StickyNote, label: 'Sticky note', shortcut: 'S' },
+]
+
+const moreTools: { type: ToolType; icon: typeof Frame; label: string; shortcut?: string }[] = [
+  { type: 'frame', icon: Frame, label: 'Frame', shortcut: 'F' },
   { type: 'laser', icon: Crosshair, label: 'Laser pointer' },
   { type: 'reaction', icon: Smile, label: 'React' },
 ]
@@ -42,28 +41,73 @@ const colors = [
 ]
 
 const strokeWidths = [1, 2, 3, 5, 8, 12]
-
 const quickColors = ['#EF4444', '#22C55E', '#3B82F6', '#0F172A']
+const shapeTypes = new Set(shapeTools.map((t) => t.type))
+const noteTypes = new Set(noteTools.map((t) => t.type))
 
 function ToolbarButton({
-  active, title, onClick, children, className = '',
+  active, title, onClick, children, className = '', compact = false,
 }: {
   active?: boolean
   title: string
   onClick: () => void
   children: React.ReactNode
   className?: string
+  compact?: boolean
 }) {
   return (
     <motion.button
-      whileHover={{ scale: 1.06 }}
-      whileTap={{ scale: 0.94 }}
+      whileHover={{ scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
       onClick={onClick}
       title={title}
-      className={`toolbar-btn ${active ? 'active' : ''} ${className}`}
+      className={`toolbar-btn ${compact ? 'toolbar-btn-compact' : ''} ${active ? 'active' : ''} ${className}`}
     >
       {children}
     </motion.button>
+  )
+}
+
+function FlyoutMenu({
+  open, onClose, items, activeType, onSelect, top,
+}: {
+  open: boolean
+  onClose: () => void
+  items: { type: ToolType; icon: typeof Square; label: string; shortcut?: string }[]
+  activeType: ToolType
+  onSelect: (type: ToolType) => void
+  top: number
+}) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-[55]" onClick={onClose} aria-hidden />
+          <motion.div
+            initial={{ opacity: 0, x: -6, scale: 0.96 }}
+            animate={{ opacity: 1, x: 0, scale: 1 }}
+            exit={{ opacity: 0, x: -6, scale: 0.96 }}
+            className="floating-toolbar toolbar-flyout"
+            style={{ top }}
+          >
+            {items.map((item) => (
+              <button
+                key={item.type}
+                type="button"
+                onClick={() => { onSelect(item.type); onClose() }}
+                className={`toolbar-flyout-item ${activeType === item.type ? 'active' : ''}`}
+              >
+                <item.icon style={{ width: 16, height: 16, flexShrink: 0 }} />
+                <span style={{ flex: 1 }}>{item.label}</span>
+                {item.shortcut && (
+                  <span style={{ fontSize: 10, color: 'var(--color-muted-foreground)' }}>{item.shortcut}</span>
+                )}
+              </button>
+            ))}
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   )
 }
 
@@ -76,17 +120,51 @@ export default function ToolSidebar() {
     history, historyIndex, undo, redo,
   } = useBoardStore()
 
+  const [lastShape, setLastShape] = useState<ToolType>('rectangle')
+  const [lastNote, setLastNote] = useState<ToolType>('text')
   const [showColorPicker, setShowColorPicker] = useState(false)
-  const [showQuickMenu, setShowQuickMenu] = useState(false)
+  const [openMenu, setOpenMenu] = useState<{ id: string; top: number } | null>(null)
   const importRef = useRef<HTMLInputElement>(null)
+  const mainBarRef = useRef<HTMLDivElement>(null)
 
   const boardId = board?.roomId
   const canUndo = historyIndex > 0
   const canRedo = historyIndex < history.length - 1
 
-  const needsContextPanel = ['pen', 'eraser', 'rectangle', 'circle', 'line', 'arrow'].includes(activeTool)
-  const needsText = ['text', 'sticky'].includes(activeTool)
+  const currentShape = shapeTypes.has(activeTool) ? activeTool : lastShape
+  const currentNote = noteTypes.has(activeTool) ? activeTool : lastNote
+  const ShapeIcon = shapeTools.find((t) => t.type === currentShape)?.icon ?? Shapes
+  const NoteIcon = noteTools.find((t) => t.type === currentNote)?.icon ?? Type
+
+  const needsContextPanel = ['pen', 'eraser', ...shapeTools.map((t) => t.type)].includes(activeTool)
+  const anyMenuOpen = openMenu !== null
+  const showContextPanel = needsContextPanel && !anyMenuOpen
+  const needsText = noteTypes.has(activeTool) && !anyMenuOpen
   const reactionEmojis = ['👍', '❤️', '🔥', '😂', '🎉', '👏', '💡', '✅']
+
+  const closeMenus = () => {
+    setOpenMenu(null)
+    setShowColorPicker(false)
+  }
+
+  const toggleMenu = (id: string, rowEl: HTMLElement) => {
+    if (!mainBarRef.current) return
+    const top = rowEl.offsetTop
+    setOpenMenu((prev) => (prev?.id === id ? null : { id, top }))
+    setShowColorPicker(false)
+  }
+
+  const pickShape = (type: ToolType) => {
+    setLastShape(type)
+    setActiveTool(type)
+    closeMenus()
+  }
+
+  const pickNote = (type: ToolType) => {
+    setLastNote(type)
+    setActiveTool(type)
+    closeMenus()
+  }
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -119,215 +197,224 @@ export default function ToolSidebar() {
     else if (mode === 'marker') setToolStrokeWidth(Math.max(toolStrokeWidth, 5))
   }
 
+  const barStyle: React.CSSProperties = {
+    position: 'relative',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: 1,
+    padding: '6px 4px',
+  }
+
+  const clusterStyle: React.CSSProperties = {
+    position: 'absolute',
+    left: 16,
+    top: '50%',
+    transform: 'translateY(-50%)',
+    zIndex: 30,
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    pointerEvents: 'none',
+  }
+
   return (
-    <>
-      {/* Main floating toolbar */}
-      <div
-        className="floating-toolbar pointer-events-auto"
-        style={{
-          position: 'absolute',
-          left: 16,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          zIndex: 30,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 2,
-          padding: '8px 6px',
-        }}
-      >
-        {/* AI quick actions */}
-        <div style={{ position: 'relative' }}>
-          <ToolbarButton
-            className="ai-btn"
-            title="Quick actions"
-            onClick={() => setShowQuickMenu(!showQuickMenu)}
-          >
-            <Sparkles style={{ width: 20, height: 20 }} />
+    <div style={clusterStyle}>
+      <div ref={mainBarRef} className="floating-toolbar pointer-events-auto" style={barStyle}>
+        <div id="menu-row-quick">
+          <ToolbarButton compact className="ai-btn" title="Quick add" onClick={() => {
+            const row = mainBarRef.current?.querySelector('#menu-row-quick') as HTMLElement
+            if (row) toggleMenu('quick', row)
+          }}>
+            <Sparkles style={{ width: 18, height: 18 }} />
           </ToolbarButton>
-          <AnimatePresence>
-            {showQuickMenu && (
-              <motion.div
-                initial={{ opacity: 0, x: -8, scale: 0.95 }}
-                animate={{ opacity: 1, x: 0, scale: 1 }}
-                exit={{ opacity: 0, x: -8, scale: 0.95 }}
-                style={{
-                  position: 'absolute',
-                  left: 56,
-                  top: 0,
-                  zIndex: 50,
-                  minWidth: 180,
-                  borderRadius: 14,
-                  border: '1px solid var(--color-border)',
-                  background: 'var(--color-card)',
-                  padding: 8,
-                  boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-                }}
-              >
-                <p style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 8px 8px' }}>
-                  Quick add
-                </p>
-                {[
-                  { label: 'Sticky note', tool: 'sticky' as ToolType },
-                  { label: 'Text block', tool: 'text' as ToolType },
-                  { label: 'Frame', tool: 'frame' as ToolType },
-                ].map((item) => (
-                  <button
-                    key={item.tool}
-                    type="button"
-                    onClick={() => { setActiveTool(item.tool); setShowQuickMenu(false) }}
-                    style={{
-                      display: 'block', width: '100%', textAlign: 'left',
-                      padding: '8px 12px', borderRadius: 8, border: 'none',
-                      background: 'transparent', cursor: 'pointer',
-                      fontSize: 13, color: 'var(--color-foreground)',
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-muted)' }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent' }}
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </motion.div>
-            )}
-          </AnimatePresence>
         </div>
 
-        <div style={{ width: 28, height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
+        <div className="toolbar-divider" />
 
-        {mainTools.map((tool) => (
+        <ToolbarButton compact active={activeTool === 'select'} title="Select (V)" onClick={() => { closeMenus(); setActiveTool('select') }}>
+          <MousePointer2 style={{ width: 17, height: 17 }} />
+        </ToolbarButton>
+        <ToolbarButton compact active={activeTool === 'hand'} title="Pan (H)" onClick={() => { closeMenus(); setActiveTool('hand') }}>
+          <Hand style={{ width: 17, height: 17 }} />
+        </ToolbarButton>
+
+        <div style={{ display: 'flex', alignItems: 'center' }} id="menu-row-shape">
           <ToolbarButton
-            key={tool.type}
-            active={activeTool === tool.type}
-            title={`${tool.label} (${tool.shortcut})`}
-            onClick={() => setActiveTool(tool.type)}
+            compact
+            active={shapeTypes.has(activeTool)}
+            title={`Shape: ${shapeTools.find((t) => t.type === currentShape)?.label}`}
+            onClick={() => { closeMenus(); pickShape(currentShape) }}
           >
-            <tool.icon style={{ width: 18, height: 18 }} />
+            <ShapeIcon style={{ width: 17, height: 17 }} />
           </ToolbarButton>
-        ))}
+          <button
+            type="button"
+            title="More shapes"
+            onClick={(e) => {
+              const row = (e.currentTarget as HTMLElement).parentElement!
+              toggleMenu('shape', row)
+            }}
+            style={{
+              width: 14, height: 34, border: 'none', cursor: 'pointer',
+              background: openMenu?.id === 'shape' ? 'var(--color-muted)' : 'transparent',
+              color: 'var(--color-muted-foreground)', borderRadius: '0 8px 8px 0',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: -4,
+            }}
+          >
+            <ChevronRight style={{ width: 12, height: 12 }} />
+          </button>
+        </div>
 
-        <div style={{ width: 28, height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
-
-        {extraTools.map((tool) => (
+        <div style={{ display: 'flex', alignItems: 'center' }} id="menu-row-note">
           <ToolbarButton
-            key={tool.type}
-            active={activeTool === tool.type}
-            title={tool.label}
-            onClick={() => setActiveTool(tool.type)}
+            compact
+            active={noteTypes.has(activeTool)}
+            title={`Note: ${noteTools.find((t) => t.type === currentNote)?.label}`}
+            onClick={() => { closeMenus(); pickNote(currentNote) }}
           >
-            <tool.icon style={{ width: 18, height: 18 }} />
+            <NoteIcon style={{ width: 17, height: 17 }} />
           </ToolbarButton>
-        ))}
+          <button
+            type="button"
+            title="More note types"
+            onClick={(e) => toggleMenu('note', (e.currentTarget as HTMLElement).parentElement!)}
+            style={{
+              width: 14, height: 34, border: 'none', cursor: 'pointer',
+              background: openMenu?.id === 'note' ? 'var(--color-muted)' : 'transparent',
+              color: 'var(--color-muted-foreground)', borderRadius: '0 8px 8px 0',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', marginLeft: -4,
+            }}
+          >
+            <ChevronRight style={{ width: 12, height: 12 }} />
+          </button>
+        </div>
 
-        <input
-          ref={importRef}
-          type="file"
-          accept="image/*,.pdf,application/pdf"
-          className="hidden"
-          onChange={(e) => { void handleImport(e) }}
+        <ToolbarButton compact active={activeTool === 'pen'} title="Draw (P)" onClick={() => { closeMenus(); setActiveTool('pen') }}>
+          <Pencil style={{ width: 17, height: 17 }} />
+        </ToolbarButton>
+        <ToolbarButton compact active={activeTool === 'eraser'} title="Eraser (E)" onClick={() => { closeMenus(); setActiveTool('eraser') }}>
+          <Eraser style={{ width: 17, height: 17 }} />
+        </ToolbarButton>
+
+        <div className="toolbar-divider" />
+
+        <div id="menu-row-more">
+          <ToolbarButton
+            compact
+            active={moreTools.some((t) => t.type === activeTool)}
+            title="More tools"
+            onClick={() => toggleMenu('more', mainBarRef.current!.querySelector('#menu-row-more') as HTMLElement)}
+          >
+            <MoreHorizontal style={{ width: 17, height: 17 }} />
+          </ToolbarButton>
+        </div>
+
+        <input ref={importRef} type="file" accept="image/*,.pdf,application/pdf" className="hidden" onChange={(e) => { void handleImport(e) }} />
+        <ToolbarButton compact title="Import image or PDF" onClick={() => importRef.current?.click()}>
+          <Plus style={{ width: 17, height: 17 }} />
+        </ToolbarButton>
+
+        <div className="toolbar-divider" />
+
+        <div style={{ display: 'flex', gap: 1 }}>
+          <ToolbarButton compact title="Undo" onClick={undo} className={!canUndo ? 'opacity-40' : ''}>
+            <Undo2 style={{ width: 15, height: 15 }} />
+          </ToolbarButton>
+          <ToolbarButton compact title="Redo" onClick={redo} className={!canRedo ? 'opacity-40' : ''}>
+            <Redo2 style={{ width: 15, height: 15 }} />
+          </ToolbarButton>
+        </div>
+
+        <FlyoutMenu
+          open={openMenu?.id === 'quick'}
+          top={openMenu?.id === 'quick' ? openMenu.top : 0}
+          onClose={closeMenus}
+          activeType={activeTool}
+          items={[
+            { type: 'sticky', icon: StickyNote, label: 'Sticky note', shortcut: 'S' },
+            { type: 'text', icon: Type, label: 'Text block', shortcut: 'T' },
+            { type: 'frame', icon: Frame, label: 'Frame', shortcut: 'F' },
+          ]}
+          onSelect={(type) => { setActiveTool(type); closeMenus() }}
         />
-        <ToolbarButton title="Import image or PDF" onClick={() => importRef.current?.click()}>
-          <Plus style={{ width: 18, height: 18 }} />
-        </ToolbarButton>
-
-        <div style={{ width: 28, height: 1, background: 'var(--color-border)', margin: '4px 0' }} />
-
-        <ToolbarButton title="Undo (Ctrl+Z)" onClick={undo} className={!canUndo ? 'opacity-40' : ''}>
-          <Undo2 style={{ width: 18, height: 18 }} />
-        </ToolbarButton>
-        <ToolbarButton title="Redo (Ctrl+Y)" onClick={redo} className={!canRedo ? 'opacity-40' : ''}>
-          <Redo2 style={{ width: 18, height: 18 }} />
-        </ToolbarButton>
+        <FlyoutMenu
+          open={openMenu?.id === 'shape'}
+          top={openMenu?.id === 'shape' ? openMenu.top : 0}
+          onClose={closeMenus}
+          activeType={currentShape}
+          items={shapeTools}
+          onSelect={pickShape}
+        />
+        <FlyoutMenu
+          open={openMenu?.id === 'note'}
+          top={openMenu?.id === 'note' ? openMenu.top : 0}
+          onClose={closeMenus}
+          activeType={currentNote}
+          items={noteTools}
+          onSelect={pickNote}
+        />
+        <FlyoutMenu
+          open={openMenu?.id === 'more'}
+          top={openMenu?.id === 'more' ? openMenu.top : 0}
+          onClose={closeMenus}
+          activeType={activeTool}
+          items={moreTools}
+          onSelect={(type) => { setActiveTool(type); closeMenus() }}
+        />
       </div>
 
-      {/* Contextual sub-toolbar */}
       <AnimatePresence>
-        {needsContextPanel && (
+        {showContextPanel && (
           <motion.div
-            initial={{ opacity: 0, x: -12 }}
+            initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -12 }}
+            exit={{ opacity: 0, x: -8 }}
             className="floating-toolbar pointer-events-auto"
             style={{
-              position: 'absolute',
-              left: 76,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              zIndex: 29,
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: 2,
-              padding: '8px 6px',
+              display: 'flex', flexDirection: 'column', alignItems: 'center',
+              gap: 1, padding: '6px 4px', flexShrink: 0,
             }}
           >
             {activeTool === 'pen' && penModes.map((pm) => (
-              <ToolbarButton
-                key={pm.mode}
-                active={penMode === pm.mode}
-                title={pm.label}
-                onClick={() => handlePenModeSelect(pm.mode)}
-              >
-                <pm.icon style={{ width: 18, height: 18 }} />
+              <ToolbarButton key={pm.mode} compact active={penMode === pm.mode} title={pm.label} onClick={() => handlePenModeSelect(pm.mode)}>
+                <pm.icon style={{ width: 16, height: 16 }} />
               </ToolbarButton>
             ))}
 
             {activeTool === 'eraser' && (
               <>
-                <ToolbarButton active title="Object eraser" onClick={() => {}}>
-                  <Eraser style={{ width: 18, height: 18 }} />
+                <ToolbarButton compact active title="Eraser" onClick={() => {}}>
+                  <Eraser style={{ width: 16, height: 16 }} />
                 </ToolbarButton>
-                <ToolbarButton title="Lasso select (coming soon)" onClick={() => toast.info('Lasso select coming soon')}>
-                  <Lasso style={{ width: 18, height: 18, opacity: 0.4 }} />
+                <ToolbarButton compact title="Lasso (soon)" onClick={() => toast.info('Coming soon')}>
+                  <Lasso style={{ width: 16, height: 16, opacity: 0.45 }} />
                 </ToolbarButton>
               </>
             )}
 
-            {['rectangle', 'circle', 'line', 'arrow'].includes(activeTool) && (
-              <ToolbarButton
-                title="Stroke width"
-                onClick={() => setShowColorPicker(!showColorPicker)}
-              >
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
-                  {[1, 2, 4].map((w) => (
-                    <div key={w} style={{ width: 14, height: w, borderRadius: 2, background: 'currentColor' }} />
-                  ))}
-                </div>
-              </ToolbarButton>
-            )}
-
             <div style={{ position: 'relative' }}>
-              <ToolbarButton
-                active={showColorPicker}
-                title="Color & stroke"
-                onClick={() => setShowColorPicker(!showColorPicker)}
-              >
+              <ToolbarButton compact active={showColorPicker} title="Color & stroke" onClick={() => setShowColorPicker(!showColorPicker)}>
                 <div style={{
-                  width: 22, height: 22, borderRadius: '50%',
-                  background: toolColor,
-                  boxShadow: `0 0 0 2px var(--color-card), 0 0 0 3.5px ${toolColor}`,
+                  width: 20, height: 20, borderRadius: '50%', background: toolColor,
+                  boxShadow: `0 0 0 2px var(--color-card), 0 0 0 3px ${toolColor}`,
                 }}
                 />
               </ToolbarButton>
-
-              {/* Quick color swatches below */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, marginTop: 4 }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, marginTop: 3 }}>
                 {quickColors.filter((c) => c !== toolColor).slice(0, 2).map((c) => (
                   <button
                     key={c}
                     type="button"
                     onClick={() => setToolColor(c)}
-                    title="Quick color"
                     style={{
-                      width: 16, height: 16, borderRadius: '50%',
-                      background: c, border: '2px solid var(--color-card)',
-                      cursor: 'pointer', boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                      width: 14, height: 14, borderRadius: '50%', background: c,
+                      border: '2px solid var(--color-card)', cursor: 'pointer',
                     }}
                   />
                 ))}
               </div>
-
               <AnimatePresence>
                 {showColorPicker && (
                   <motion.div
@@ -335,29 +422,21 @@ export default function ToolSidebar() {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -8 }}
                     style={{
-                      position: 'absolute',
-                      left: 52,
-                      top: 0,
-                      zIndex: 50,
-                      borderRadius: 14,
-                      border: '1px solid var(--color-border)',
-                      background: 'var(--color-card)',
-                      padding: 14,
-                      boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
-                      minWidth: 160,
+                      position: 'absolute', left: 'calc(100% + 8px)', top: 0, zIndex: 50,
+                      borderRadius: 14, border: '1px solid var(--color-border)',
+                      background: 'var(--color-card)', padding: 12,
+                      boxShadow: '0 8px 32px rgba(0,0,0,0.15)', minWidth: 150,
                     }}
                   >
-                    <p style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
-                      Color
-                    </p>
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, marginBottom: 14 }}>
+                    <p className="toolbar-panel-label">Color</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 5, marginBottom: 12 }}>
                       {colors.map((color) => (
                         <button
                           key={color}
                           type="button"
                           onClick={() => setToolColor(color)}
                           style={{
-                            width: 24, height: 24, borderRadius: '50%', border: 'none',
+                            width: 22, height: 22, borderRadius: '50%', border: 'none',
                             background: color, cursor: 'pointer',
                             outline: toolColor === color ? '2px solid var(--color-accent)' : 'none',
                             outlineOffset: 2,
@@ -365,23 +444,21 @@ export default function ToolSidebar() {
                         />
                       ))}
                     </div>
-                    <p style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>
-                      Stroke
-                    </p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    <p className="toolbar-panel-label">Stroke</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                       {strokeWidths.map((w) => (
                         <button
                           key={w}
                           type="button"
                           onClick={() => { setToolStrokeWidth(w); setShowColorPicker(false) }}
                           style={{
-                            display: 'flex', alignItems: 'center', gap: 10,
-                            padding: '6px 10px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', gap: 8,
+                            padding: '5px 8px', borderRadius: 8, border: 'none', cursor: 'pointer',
                             background: toolStrokeWidth === w ? 'rgba(99,102,241,0.12)' : 'transparent',
                             color: toolStrokeWidth === w ? 'var(--color-accent)' : 'var(--color-foreground)',
                           }}
                         >
-                          <div style={{ width: 40, display: 'flex', alignItems: 'center' }}>
+                          <div style={{ width: 36, display: 'flex', alignItems: 'center' }}>
                             <div style={{ width: '100%', height: w, borderRadius: 999, background: 'currentColor' }} />
                           </div>
                           <span style={{ fontSize: 11 }}>{w}px</span>
@@ -396,36 +473,21 @@ export default function ToolSidebar() {
         )}
       </AnimatePresence>
 
-      {/* Text options panel */}
       <AnimatePresence>
         {needsText && (
           <motion.div
-            initial={{ opacity: 0, x: -12 }}
+            initial={{ opacity: 0, x: -8 }}
             animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: -12 }}
+            exit={{ opacity: 0, x: -8 }}
             className="floating-toolbar pointer-events-auto"
-            style={{
-              position: 'absolute',
-              left: 76,
-              top: '50%',
-              transform: 'translateY(-50%)',
-              zIndex: 29,
-              padding: 14,
-              minWidth: 200,
-            }}
+            style={{ padding: 12, minWidth: 180, flexShrink: 0 }}
           >
-            <p style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-muted-foreground)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>
-              Text
-            </p>
+            <p className="toolbar-panel-label">Text</p>
             <select
               title="Font Size"
               value={textFontSize}
               onChange={(e) => setTextFontSize(Number(e.target.value))}
-              style={{
-                width: '100%', height: 36, borderRadius: 10, marginBottom: 10,
-                border: '1px solid var(--color-border)', background: 'var(--color-surface-1)',
-                padding: '0 10px', fontSize: 13, color: 'var(--color-foreground)', cursor: 'pointer',
-              }}
+              className="toolbar-select"
             >
               {[12, 14, 16, 18, 20, 24, 28, 32, 40, 48].map((s) => (
                 <option key={s} value={s}>{s}px</option>
@@ -435,11 +497,8 @@ export default function ToolSidebar() {
               title="Font Family"
               value={textFontFamily}
               onChange={(e) => setTextFontFamily(e.target.value)}
-              style={{
-                width: '100%', height: 36, borderRadius: 10,
-                border: '1px solid var(--color-border)', background: 'var(--color-surface-1)',
-                padding: '0 10px', fontSize: 13, color: 'var(--color-foreground)', cursor: 'pointer',
-              }}
+              className="toolbar-select"
+              style={{ marginTop: 8 }}
             >
               {['Inter', 'Arial', 'Georgia', 'Courier New', 'Comic Sans MS'].map((f) => (
                 <option key={f} value={f}>{f}</option>
@@ -449,21 +508,11 @@ export default function ToolSidebar() {
         )}
       </AnimatePresence>
 
-      {/* Reaction emoji picker */}
       {activeTool === 'reaction' && (
         <div
           className="floating-toolbar pointer-events-auto"
           style={{
-            position: 'absolute',
-            left: 76,
-            top: '50%',
-            transform: 'translateY(-50%)',
-            zIndex: 29,
-            display: 'flex',
-            flexWrap: 'wrap',
-            gap: 4,
-            padding: 10,
-            maxWidth: 160,
+            display: 'flex', flexWrap: 'wrap', gap: 4, padding: 8, maxWidth: 140, flexShrink: 0,
           }}
         >
           {reactionEmojis.map((e) => (
@@ -472,7 +521,7 @@ export default function ToolSidebar() {
               type="button"
               onClick={() => setReactionEmoji(e)}
               style={{
-                width: 36, height: 36, borderRadius: 10, fontSize: 18,
+                width: 32, height: 32, borderRadius: 8, fontSize: 16,
                 border: reactionEmoji === e ? '2px solid var(--color-accent)' : '1px solid var(--color-border)',
                 background: 'var(--color-surface-1)', cursor: 'pointer',
               }}
@@ -482,6 +531,6 @@ export default function ToolSidebar() {
           ))}
         </div>
       )}
-    </>
+    </div>
   )
 }

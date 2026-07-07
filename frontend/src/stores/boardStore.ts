@@ -4,6 +4,7 @@ import type {
   CanvasElement,
   ToolType,
   PenMode,
+  ShapeToolType,
   CursorPosition,
   ActivityEvent,
   UserSession,
@@ -29,6 +30,8 @@ interface BoardState {
   /* Tool */
   activeTool: ToolType
   penMode: PenMode
+  lastShapeTool: ShapeToolType
+  shapeFillEnabled: boolean
   toolColor: string
   toolStrokeWidth: number
   showGrid: boolean
@@ -71,6 +74,8 @@ interface BoardState {
   setError: (error: string | null) => void
   setActiveTool: (tool: ToolType) => void
   setPenMode: (mode: PenMode) => void
+  setLastShapeTool: (shape: ShapeToolType) => void
+  setShapeFillEnabled: (enabled: boolean) => void
   setToolColor: (color: string) => void
   setToolStrokeWidth: (width: number) => void
   setShowGrid: (show: boolean) => void
@@ -129,6 +134,8 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   selectedElementIds: [],
   activeTool: 'select',
   penMode: 'pen',
+  lastShapeTool: 'rectangle',
+  shapeFillEnabled: true,
   toolColor: '#EF4444',
   toolStrokeWidth: 3,
   showGrid: true,
@@ -159,8 +166,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   setBoard: (board) => set({ board }),
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
-  setActiveTool: (activeTool) => set({ activeTool }),
+  setActiveTool: (activeTool) => {
+    const shapes: ShapeToolType[] = ['rectangle', 'circle', 'line', 'arrow']
+    if (shapes.includes(activeTool as ShapeToolType)) {
+      set({ activeTool, lastShapeTool: activeTool as ShapeToolType })
+    } else {
+      set({ activeTool })
+    }
+  },
   setPenMode: (penMode) => set({ penMode, activeTool: 'pen' }),
+  setLastShapeTool: (lastShapeTool) => set({ lastShapeTool, activeTool: lastShapeTool }),
+  setShapeFillEnabled: (shapeFillEnabled) => set({ shapeFillEnabled }),
   setToolColor: (toolColor) => set({ toolColor }),
   setToolStrokeWidth: (toolStrokeWidth) => set({ toolStrokeWidth }),
   setShowGrid: (showGrid) => set({ showGrid }),
