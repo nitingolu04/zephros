@@ -3,6 +3,7 @@ import type {
   Board,
   CanvasElement,
   ToolType,
+  PenMode,
   CursorPosition,
   ActivityEvent,
   UserSession,
@@ -27,8 +28,11 @@ interface BoardState {
 
   /* Tool */
   activeTool: ToolType
+  penMode: PenMode
   toolColor: string
   toolStrokeWidth: number
+  showGrid: boolean
+  snapToGrid: boolean
 
   /* Text formatting */
   textFontSize: number
@@ -66,8 +70,12 @@ interface BoardState {
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   setActiveTool: (tool: ToolType) => void
+  setPenMode: (mode: PenMode) => void
   setToolColor: (color: string) => void
   setToolStrokeWidth: (width: number) => void
+  setShowGrid: (show: boolean) => void
+  setSnapToGrid: (snap: boolean) => void
+  fitToView: (containerWidth: number, containerHeight: number) => void
   setTextFontSize: (size: number) => void
   setTextFontFamily: (family: string) => void
   setTextBold: (bold: boolean) => void
@@ -120,8 +128,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   elements: [],
   selectedElementIds: [],
   activeTool: 'select',
-  toolColor: '#6366F1',
-  toolStrokeWidth: 2,
+  penMode: 'pen',
+  toolColor: '#EF4444',
+  toolStrokeWidth: 3,
+  showGrid: true,
+  snapToGrid: false,
   textFontSize: 18,
   textFontFamily: 'Inter',
   textBold: false,
@@ -149,8 +160,48 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   setActiveTool: (activeTool) => set({ activeTool }),
+  setPenMode: (penMode) => set({ penMode, activeTool: 'pen' }),
   setToolColor: (toolColor) => set({ toolColor }),
   setToolStrokeWidth: (toolStrokeWidth) => set({ toolStrokeWidth }),
+  setShowGrid: (showGrid) => set({ showGrid }),
+  setSnapToGrid: (snapToGrid) => set({ snapToGrid }),
+
+  fitToView: (containerWidth, containerHeight) => {
+    const { elements } = get()
+    if (elements.length === 0) {
+      set({ stageScale: 1, stagePosition: { x: 0, y: 0 } })
+      return
+    }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const el of elements) {
+      if (el.type === 'pen' || el.type === 'line' || el.type === 'arrow') {
+        const pts = el.points || []
+        for (let i = 0; i < pts.length; i += 2) {
+          minX = Math.min(minX, pts[i])
+          minY = Math.min(minY, pts[i + 1])
+          maxX = Math.max(maxX, pts[i])
+          maxY = Math.max(maxY, pts[i + 1])
+        }
+      } else {
+        minX = Math.min(minX, el.x)
+        minY = Math.min(minY, el.y)
+        maxX = Math.max(maxX, el.x + (el.width || 100))
+        maxY = Math.max(maxY, el.y + (el.height || 40))
+      }
+    }
+    const padding = 80
+    const contentW = maxX - minX + padding * 2
+    const contentH = maxY - minY + padding * 2
+    const scale = Math.min(containerWidth / contentW, containerHeight / contentH, 2)
+    const clampedScale = Math.max(0.1, Math.min(5, scale))
+    set({
+      stageScale: clampedScale,
+      stagePosition: {
+        x: (containerWidth - contentW * clampedScale) / 2 - (minX - padding) * clampedScale,
+        y: (containerHeight - contentH * clampedScale) / 2 - (minY - padding) * clampedScale,
+      },
+    })
+  },
   setTextFontSize: (textFontSize) => set({ textFontSize }),
   setTextFontFamily: (textFontFamily) => set({ textFontFamily }),
   setTextBold: (textBold) => set({ textBold }),

@@ -12,6 +12,7 @@ import LoginPage from '@/pages/LoginPage'
 // Board pulls in Konva, PDF import/export, WebRTC — keep off the homepage bundle.
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
 const BoardPage = lazy(() => import('@/pages/BoardPage'))
+const CanvasPreviewPage = lazy(() => import('@/pages/CanvasPreviewPage'))
 
 export default function App() {
   const resolved = useThemeStore((s) => s.resolved)
@@ -36,6 +37,16 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<LandingPage />} />
+        <Route
+          path="/canvas-preview"
+          element={(
+            <ErrorBoundary fallbackTitle="Canvas preview failed to load">
+              <Suspense fallback={<PageLoader label="Loading canvas…" />}>
+                <CanvasPreviewPage />
+              </Suspense>
+            </ErrorBoundary>
+          )}
+        />
         <Route
           path="/dashboard"
           element={(

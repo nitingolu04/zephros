@@ -262,7 +262,9 @@ export interface ActivityEvent {
 
 /* ── Tool Types ── */
 
-export type ToolType = 'select' | 'pen' | 'rectangle' | 'circle' | 'line' | 'arrow' | 'text' | 'sticky' | 'eraser' | 'laser' | 'reaction' | 'frame'
+export type ToolType = 'select' | 'hand' | 'pen' | 'rectangle' | 'circle' | 'line' | 'arrow' | 'text' | 'sticky' | 'eraser' | 'laser' | 'reaction' | 'frame'
+
+export type PenMode = 'pen' | 'highlighter' | 'marker'
 
 
 

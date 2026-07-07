@@ -207,17 +207,21 @@ export default function BoardPage() {
         if (id) syncFullState(id)
       }
       if (e.key === 'v') { e.preventDefault(); store.duplicateSelected() }
-      if (e.key === 'a') { e.preventDefault(); store.selectAll() }
+      if (e.key === 'a' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); store.selectAll() }
     }
 
     if (e.key === 'Escape') store.clearSelection()
 
     const toolMap: Record<string, ToolType> = {
-      v: 'select', p: 'pen', r: 'rectangle', c: 'circle',
-      l: 'line', a: 'arrow', t: 'text', s: 'sticky', e: 'eraser', f: 'frame',
+      v: 'select', h: 'hand', p: 'pen', r: 'rectangle', c: 'circle',
+      l: 'line', t: 'text', s: 'sticky', e: 'eraser', f: 'frame',
     }
-    if (!e.ctrlKey && !e.metaKey && toolMap[e.key]) {
+    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && toolMap[e.key]) {
       store.setActiveTool(toolMap[e.key])
+    }
+    if (e.shiftKey && e.key === 'A') {
+      e.preventDefault()
+      store.setActiveTool('arrow')
     }
   }, [id])
 
@@ -367,9 +371,9 @@ export default function BoardPage() {
       />
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <ToolSidebar />
-        <div ref={canvasWrapRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <div ref={canvasWrapRef} style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
           <CanvasArea boardId={id || ''} />
+          <ToolSidebar />
           {showScreenPanel && (
             <ScreenSharePanel
               stream={screenStream}
