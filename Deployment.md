@@ -1,6 +1,46 @@
-# Aerix — Phase 3 Deployment Guide
+# Zephros — Deployment Guide
 
-Deploy Aerix with **Vercel** (frontend), **Render** (backend), and **MongoDB Atlas** (database). Railway works as a Render alternative for the backend — see [Railway](#railway-alternative-backend) below.
+Two ways to deploy, both free:
+
+| | Frontend | Backend | Database |
+|--|--|--|--|
+| **A. Everything on Render** (recommended) | Render **Static Site** | Render **Web Service** | MongoDB Atlas |
+| B. Vercel + Render | Vercel | Render Web Service | MongoDB Atlas |
+
+> **Why the backend can't be a static/serverless deploy:** it is one long-running Socket.IO process that keeps per-board write queues and call rooms in memory and runs background jobs, so it needs a persistent server.
+
+---
+
+## Option A — Everything on Render (one Blueprint)
+
+`render.yaml` defines both services: **zephros-backend** (Web Service) and **zephros-frontend** (Static Site, served from Render's CDN, so it never sleeps).
+
+1. **Push the code to GitHub.** Render builds from the repository.
+2. **MongoDB Atlas:** create the database and copy its connection string ([Step 1](#step-1--mongodb-atlas) below).
+3. **Render → New → Blueprint →** connect the repo. Render reads `render.yaml` and shows both services.
+4. Render asks for each secret value. Fill in what you have now:
+
+   | Service | Variable | Value |
+   |--|--|--|
+   | zephros-backend | `MONGO_URI` | Atlas connection string |
+   | zephros-backend | `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | From the Firebase service-account JSON (same as `backend/.env`) |
+   | zephros-backend | `CLIENT_URL` | `https://zephros-frontend.onrender.com` *(confirm the real URL after step 5)* |
+   | zephros-frontend | `VITE_API_URL` | `https://zephros-backend.onrender.com` *(confirm after step 5)* |
+   | zephros-frontend | 6 × `VITE_FIREBASE_*` | Same as `frontend/.env` |
+
+   Render names each site after its service, so the URLs are usually exactly as above. If a name was taken, Render adds a suffix; use the real URLs.
+5. Click **Apply**. Both services build. Open each service and **copy its URL** from the top of the page.
+6. **If either URL differs from what you entered:** fix `CLIENT_URL` (backend) or `VITE_API_URL` (frontend) under that service's **Environment** tab. Changing `VITE_API_URL` needs a **new frontend deploy** (Manual Deploy → Deploy latest commit), because it is baked in at build time.
+7. **Firebase → Authentication → Settings → Authorized domains →** add `zephros-frontend.onrender.com`.
+8. Check `https://zephros-backend.onrender.com/api/health` shows `"status":"ok"`, then open the frontend URL and sign in.
+
+> **Free plan:** the backend sleeps after ~15 minutes idle and can take up to a minute to wake. The frontend loads instantly and starts waking the backend automatically; open the site a minute before a demo.
+
+---
+
+## Option B — Vercel (frontend) + Render (backend)
+
+Follow the steps below. In the Render Blueprint, the frontend Static Site is created too; delete **zephros-frontend** in Render if you use Vercel instead.
 
 **Cost:** Free tier on all three services is enough to launch.
 
@@ -8,7 +48,7 @@ Deploy Aerix with **Vercel** (frontend), **Render** (backend), and **MongoDB Atl
 
 ## Prerequisites
 
-- GitHub account + repo with your Aerix code pushed
+- GitHub account + repo with your Zephros code pushed
 - Firebase project (you already use `aerix-acebb` locally)
 - ~30 minutes for first-time setup
 
@@ -21,9 +61,9 @@ Deploy Aerix with **Vercel** (frontend), **Render** (backend), and **MongoDB Atl
 3. **Network Access** → Add IP Address → **Allow Access from Anywhere** (`0.0.0.0/0`). Required for Render’s dynamic IPs.
 4. **Database** → Connect → **Drivers** → copy the connection string:
    ```
-   mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/aerix?retryWrites=true&w=majority
+   mongodb+srv://USER:PASSWORD@cluster0.xxxxx.mongodb.net/zephros?retryWrites=true&w=majority
    ```
-   Replace `USER`, `PASSWORD`, and use database name `aerix`.
+   Replace `USER`, `PASSWORD`, and use database name `zephros`.
 
 ---
 
@@ -33,7 +73,7 @@ Deploy Aerix with **Vercel** (frontend), **Render** (backend), and **MongoDB Atl
 
 1. [Render Dashboard](https://dashboard.render.com/) → **New** → **Blueprint**.
 2. Connect your GitHub repo. Render reads `render.yaml` at the repo root.
-3. After deploy, open the **aerix-backend** service → **Environment** and set:
+3. After deploy, open the **zephros-backend** service → **Environment** and set:
 
 | Variable | Value |
 |----------|--------|
@@ -43,23 +83,23 @@ Deploy Aerix with **Vercel** (frontend), **Render** (backend), and **MongoDB Atl
 | `FIREBASE_CLIENT_EMAIL` | `firebase-adminsdk-...@aerix-acebb.iam.gserviceaccount.com` |
 | `FIREBASE_PRIVATE_KEY` | Full private key from Firebase service account JSON (paste as one line; `\n` for newlines) |
 
-4. Copy your backend URL, e.g. `https://aerix-backend.onrender.com` (no trailing slash).
+4. Copy your backend URL, e.g. `https://zephros-backend.onrender.com` (no trailing slash).
 
 ### Option B — Manual Web Service
 
 1. **New** → **Web Service** → connect repo.
 2. **Root Directory:** `backend`
-3. **Build Command:** `npm install`
+3. **Build Command:** `npm ci --omit=dev`
 4. **Start Command:** `node src/index.js`
 5. **Health Check Path:** `/api/health`
-6. Add the same environment variables as above. `PORT` is set automatically by Render.
+6. Add the same environment variables as above, plus `NODE_VERSION=22` and `NODE_ENV=production`. `PORT` is set automatically by Render.
 
 ### Verify backend
 
 Open `https://YOUR-BACKEND.onrender.com/api/health` — you should see:
 
 ```json
-{"status":"ok","timestamp":"..."}
+{"status":"ok","database":"connected"}
 ```
 
 > **Note:** Free Render services spin down after ~15 min idle. First request after sleep may take 30–60s.
@@ -83,19 +123,19 @@ Open `https://YOUR-BACKEND.onrender.com/api/health` — you should see:
 | `VITE_FIREBASE_APP_ID` | From Firebase config |
 | `VITE_GOOGLE_OAUTH_CLIENT_ID` | *(Optional)* OAuth Web client ID for Drive uploads |
 
-4. **Deploy**. Copy your Vercel URL, e.g. `https://aerix.vercel.app`.
+4. **Deploy**. Copy your Vercel URL, e.g. `https://zephros.vercel.app`.
 
 ---
 
 ## Step 4 — Connect frontend ↔ backend
 
-1. **Render** → aerix-backend → **Environment** → set:
+1. **Render** → zephros-backend → **Environment** → set:
    ```
    CLIENT_URL=https://YOUR-VERCEL-URL.vercel.app
    ```
    For preview deployments too, use comma-separated origins:
    ```
-   CLIENT_URL=https://aerix.vercel.app,https://aerix-git-main-you.vercel.app
+   CLIENT_URL=https://zephros.vercel.app,https://zephros-git-main-you.vercel.app
    ```
 2. Save — Render redeploys automatically.
 
@@ -158,7 +198,8 @@ Same env vars as Render:
 | **401 on dashboard** | Set all three `FIREBASE_*` vars on Render backend. |
 | **404 on /dashboard refresh** | `vercel.json` rewrites should be in repo; redeploy Vercel. |
 | **Slow first load** | Render free tier cold start — normal. Upgrade or use a ping cron. |
-| **Mic/video fails remotely** | Needs Phase 4 TURN server — STUN alone often fails across NATs. |
+| **Vercel build: `VITE_API_URL is not set`** | Add it under Vercel → Settings → Environment Variables, then redeploy. |
+| **Mic/video fails remotely** | The app uses a free public TURN relay, which can be unreliable. Use your own TURN service for important demos. |
 
 ---
 
@@ -178,7 +219,7 @@ Update `CLIENT_URL`, Firebase authorized domains, and Google OAuth origins to ma
 |--|-------|------------|
 | Frontend | `npm run dev` from repo root (`frontend/`, :5173) | Vercel (`frontend/`) |
 | Backend | `npm start` from repo root (`backend/`, :3001) | Render / Railway (`backend/`) |
-| Database | `mongodb://localhost:27017/aerix` | MongoDB Atlas |
+| Database | `mongodb://localhost:27017/zephros` | MongoDB Atlas |
 | `VITE_API_URL` | empty (Vite proxy) | `https://backend.onrender.com` |
 
 ---

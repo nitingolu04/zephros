@@ -32,7 +32,7 @@ export function CanvasImageNode({
       y={el.y}
       width={el.width}
       height={el.height}
-      stroke={isSelected ? '#6366F1' : undefined}
+      stroke={isSelected ? '#2563EB' : undefined}
       strokeWidth={isSelected ? 2 : 0}
     />
   )
@@ -52,8 +52,8 @@ export function CanvasFrameNode({
       <Rect
         width={el.width || 400}
         height={el.height || 300}
-        fill={el.fill || 'rgba(99,102,241,0.06)'}
-        stroke={isSelected ? '#6366F1' : (el.stroke || '#6366F1')}
+        fill={el.fill || 'rgba(24,24,27,0.03)'}
+        stroke={isSelected ? '#2563EB' : (el.stroke || '#6B6862')}
         strokeWidth={isSelected ? 3 : (el.strokeWidth || 2)}
         dash={[12, 6]}
         cornerRadius={8}
@@ -62,7 +62,7 @@ export function CanvasFrameNode({
         y={-28}
         width={Math.min(200, (el.text?.length || 5) * 9 + 24)}
         height={24}
-        fill={el.stroke || '#6366F1'}
+        fill={el.stroke || '#6B6862'}
         cornerRadius={6}
       />
       <Text

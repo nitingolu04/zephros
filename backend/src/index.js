@@ -1,64 +1,36 @@
-import dotenv from 'dotenv'
-dotenv.config()
-
-import express from 'express'
-import { createServer } from 'http'
-import { Server } from 'socket.io'
-import cors from 'cors'
+import 'dotenv/config'
 import mongoose from 'mongoose'
-import boardRoutes from './routes/board.js'
-import authRoutes from './routes/auth.js'
-import { setupSocket } from './socket/handler.js'
+import { createApp } from './app.js'
 import { startCleanupWorker } from './jobs/cleanup.js'
-import { corsOriginCheck, getAllowedOrigins } from './lib/cors.js'
+import { isFirebaseConfigured } from './lib/firebase.js'
 
-const app = express()
-const httpServer = createServer(app)
-
-// Render / Railway sit behind a reverse proxy
-app.set('trust proxy', 1)
-
-const io = new Server(httpServer, {
-  cors: {
-    origin: getAllowedOrigins(),
-    methods: ['GET', 'POST', 'PATCH', 'DELETE'],
-    credentials: true,
-  },
-  pingInterval: 25000,
-  pingTimeout: 20000,
-})
-
-// Middleware
-app.use(cors({ origin: corsOriginCheck, credentials: true }))
-app.use(express.json())
-
-// Routes
-app.use('/api/auth', authRoutes)
-app.use('/api/board', boardRoutes)
-
-// Health check
-app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() })
-})
-
-// Socket.io
-setupSocket(io)
-
-// Connect to MongoDB and start server
-const PORT = process.env.PORT || 3001
-const MONGODB_URI = process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://localhost:27017/aerix'
-
-mongoose.connect(MONGODB_URI, {
-  serverSelectionTimeoutMS: 10000,
-})
-  .then(() => {
-    console.log('[Aerix] Connected to MongoDB')
-    httpServer.listen(PORT, () => {
-      console.log(`[Aerix] Server running on port ${PORT}`)
-    })
-    startCleanupWorker()
-  })
-  .catch((err) => {
-    console.error('[Aerix] MongoDB connection error:', err)
-    process.exit(1)
-  })
+const firebaseKeys = ['FIREBASE_PROJECT_ID', 'FIREBASE_CLIENT_EMAIL', 'FIREBASE_PRIVATE_KEY']
+if (firebaseKeys.some(key => process.env[key]) && !isFirebaseConfigured()) {
+  throw new Error('Incomplete Firebase Admin configuration; fill all three variables or leave all blank for guest mode')
+}
+if (process.env.NODE_ENV === 'production' && !process.env.MONGO_URI && !process.env.MONGODB_URI) {
+  throw new Error('MONGO_URI must be configured in production')
+}
+const { httpServer, io } = createApp()
+const port = Number(process.env.PORT || 3001)
+try {
+  await mongoose.connect(process.env.MONGO_URI || process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/zephros', { serverSelectionTimeoutMS: 10000 })
+  httpServer.listen(port, () => console.log(`[Zephros] Backend http://localhost:${port} (${isFirebaseConfigured() ? 'Firebase enabled' : 'guest mode'})`))
+  const workers = startCleanupWorker()
+  const shutdown = async (signal) => {
+    console.log(`[Zephros] ${signal} received, shutting down`)
+    workers.stop()
+    // Never hang a deploy: force-exit if sockets or Mongo do not close within 10s.
+    setTimeout(() => process.exit(1), 10000).unref()
+    await new Promise(resolve => io.close(resolve)) // also closes the HTTP server
+    await mongoose.disconnect()
+    process.exit(0)
+  }
+  process.on('unhandledRejection', reason => console.error('[Zephros] Unhandled rejection:', reason))
+  process.once('SIGINT', shutdown)
+  process.once('SIGTERM', shutdown)
+} catch (error) {
+  console.error('[Zephros] Startup failed:', error.message)
+  console.error('For a local database without Atlas, run npm run dev:local from the repository root.')
+  process.exit(1)
+}

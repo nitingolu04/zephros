@@ -8,6 +8,7 @@ import ErrorBoundary from '@/components/ErrorBoundary'
 import PageLoader from '@/components/PageLoader'
 import LandingPage from '@/pages/LandingPage'
 import LoginPage from '@/pages/LoginPage'
+import { wakeBackend } from '@/services/api'
 
 // Board pulls in Konva, PDF import/export, WebRTC — keep off the homepage bundle.
 const DashboardPage = lazy(() => import('@/pages/DashboardPage'))
@@ -21,6 +22,8 @@ export default function App() {
   useEffect(() => {
     return initAuth()
   }, [initAuth])
+
+  useEffect(() => { wakeBackend() }, [])
 
   return (
     <div className="noise-overlay min-h-screen">

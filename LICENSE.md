@@ -1,6 +1,6 @@
-# Aerix Educational License
+# Zephros Educational License
 
-Copyright (c) 2026 Aerix
+Copyright (c) 2026 Zephros
 
 Permission is hereby granted to any person obtaining a copy of this software and associated documentation files to use, modify, and study the software for **personal, educational, and non-commercial purposes only**, subject to the following terms:
 
@@ -12,7 +12,7 @@ Permission is hereby granted to any person obtaining a copy of this software and
 ### CONDITIONS
 *   **Attribution**: The original copyright notice and this permission notice must be included in all copies or substantial portions of the software.
 *   **Non-Commercial**: This software and its derivative works may not be sold, used for commercial activities, or used to provide paid services.
-*   **Branding**: The "Aerix" name and branding must be preserved in any public-facing demonstrations.
+*   **Branding**: The "Zephros" name and branding must be preserved in any public-facing demonstrations.
 
 ### DISCLAIMER
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. 

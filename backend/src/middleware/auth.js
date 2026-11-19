@@ -25,7 +25,7 @@ export async function optionalAuth(req, res, next) {
 
 export async function requireAuth(req, res, next) {
   if (!isFirebaseConfigured()) {
-    return next()
+    return res.status(503).json({ error: 'Google sign-in is not configured on the server' })
   }
 
   const header = req.headers.authorization

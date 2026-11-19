@@ -19,6 +19,23 @@ export function tagScreenTrack(track: MediaStreamTrack) {
   track.contentHint = SCREEN_TRACK_HINT
 }
 
+/**
+ * Screens are mostly text: keep full resolution and drop frame rate under pressure,
+ * with enough bitrate that small fonts stay readable for viewers.
+ */
+function tuneScreenSender(sender: RTCRtpSender) {
+  try {
+    const params = sender.getParameters()
+    if (!params.encodings?.length) params.encodings = [{}]
+    params.encodings[0].maxBitrate = 2_500_000
+    params.encodings[0].maxFramerate = 30
+    ;(params as RTCRtpSendParameters & { degradationPreference?: string }).degradationPreference = 'maintain-resolution'
+    void sender.setParameters(params).catch(() => { /* browser may reject before negotiation; defaults still apply */ })
+  } catch {
+    /* older browsers: keep defaults */
+  }
+}
+
 export function addScreenTrackToPeer(pc: RTCPeerConnection, stream: MediaStream) {
   const track = stream.getVideoTracks()[0]
   if (!track) return
@@ -26,8 +43,9 @@ export function addScreenTrackToPeer(pc: RTCPeerConnection, stream: MediaStream)
   const existing = pc.getSenders().find((s) => s.track && isScreenTrack(s.track))
   if (existing) {
     void existing.replaceTrack(track)
+    tuneScreenSender(existing)
   } else {
-    pc.addTrack(track, stream)
+    tuneScreenSender(pc.addTrack(track, stream))
   }
 }
 

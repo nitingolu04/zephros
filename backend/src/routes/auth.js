@@ -1,126 +1,87 @@
 import { Router } from 'express'
 import { requireAuth, upsertUserFromToken } from '../middleware/auth.js'
 import { User, UserBoard, Board, Session } from '../models/index.js'
+import { identifier, badRequest } from '../lib/validation.js'
 
 const router = Router()
+router.use(requireAuth)
+
+const route = handler => (req, res, next) => Promise.resolve(handler(req, res, next)).catch(next)
 
 function formatUser(user) {
-  return {
-    uid: user.firebaseUid,
-    email: user.email,
-    displayName: user.displayName,
-    photoURL: user.photoURL,
-  }
+  return { uid: user.firebaseUid, email: user.email, displayName: user.displayName, photoURL: user.photoURL }
 }
 
 // POST /api/auth/sync — upsert user profile after Firebase sign-in
-router.post('/sync', requireAuth, async (req, res) => {
-  try {
-    const user = await upsertUserFromToken(req.user)
-    res.json(formatUser(user))
-  } catch (err) {
-    console.error('[Auth Sync]', err)
-    res.status(500).json({ error: 'Failed to sync user' })
-  }
-})
+router.post('/sync', route(async (req, res) => {
+  res.json(formatUser(await upsertUserFromToken(req.user)))
+}))
 
 // GET /api/auth/me
-router.get('/me', requireAuth, async (req, res) => {
-  try {
-    const user = await User.findOne({ firebaseUid: req.user.uid }).lean()
-    if (!user) {
-      const created = await upsertUserFromToken(req.user)
-      return res.json(formatUser(created))
-    }
-    res.json(formatUser(user))
-  } catch (err) {
-    console.error('[Auth Me]', err)
-    res.status(500).json({ error: 'Failed to fetch user' })
-  }
-})
+router.get('/me', route(async (req, res) => {
+  const user = await User.findOne({ firebaseUid: req.user.uid }).lean()
+  res.json(formatUser(user || await upsertUserFromToken(req.user)))
+}))
 
 // PATCH /api/auth/profile — update display name
-router.patch('/profile', requireAuth, async (req, res) => {
-  try {
-    const { displayName } = req.body
-    if (!displayName?.trim()) {
-      return res.status(400).json({ error: 'Display name is required' })
-    }
-
-    const user = await User.findOneAndUpdate(
-      { firebaseUid: req.user.uid },
-      { displayName: displayName.trim() },
-      { new: true },
-    )
-
-    if (!user) return res.status(404).json({ error: 'User not found' })
-    res.json(formatUser(user))
-  } catch (err) {
-    console.error('[Auth Profile]', err)
-    res.status(500).json({ error: 'Failed to update profile' })
+router.patch('/profile', route(async (req, res) => {
+  const displayName = req.body?.displayName
+  if (typeof displayName !== 'string' || !displayName.trim() || displayName.length > 80) {
+    throw badRequest('Display name must be 1–80 characters')
   }
-})
+  const user = await User.findOneAndUpdate(
+    { firebaseUid: req.user.uid },
+    { $set: { displayName: displayName.trim() } },
+    { new: true },
+  )
+  if (!user) return res.status(404).json({ error: 'User not found' })
+  res.json(formatUser(user))
+}))
 
-// GET /api/auth/boards — user's board history
-router.get('/boards', requireAuth, async (req, res) => {
-  try {
-    const history = await UserBoard.find({ firebaseUid: req.user.uid })
-      .sort({ lastVisited: -1 })
-      .limit(50)
-      .lean()
+// GET /api/auth/boards — the user's 50 most recent boards (3 queries total, not 2 per board)
+router.get('/boards', route(async (req, res) => {
+  const history = await UserBoard.find({ firebaseUid: req.user.uid }).sort({ lastVisited: -1 }).limit(50).lean()
+  const ids = history.map(entry => entry.boardId)
+  const [boards, counts] = await Promise.all([
+    Board.find({ roomId: { $in: ids } }, { accessPasswordHash: 0 }).lean(),
+    Session.aggregate([
+      { $match: { boardId: { $in: ids }, lastHeartbeat: { $gte: new Date(Date.now() - 45000) } } },
+      { $group: { _id: '$boardId', count: { $sum: 1 } } },
+    ]),
+  ])
+  const boardById = new Map(boards.map(board => [board.roomId, board]))
+  const countById = new Map(counts.map(row => [row._id, row.count]))
 
-    const boards = await Promise.all(
-      history.map(async (entry) => {
-        const board = await Board.findOne({ roomId: entry.boardId }).lean()
-        const activeSessions = board
-          ? await Session.countDocuments({ boardId: entry.boardId })
-          : 0
-        return {
-          id: entry.boardId,
-          title: board?.title || entry.title || 'Untitled Board',
-          lastVisited: entry.lastVisited,
-          exists: Boolean(board),
-          persistent: Boolean(board?.persistent),
-          isOwner: board?.ownerUid === req.user.uid,
-          updatedAt: board?.updatedAt || null,
-          lastEditedBy: board?.lastEditedBy || null,
-          activeSessions,
-        }
-      }),
-    )
-
-    res.json({ boards })
-  } catch (err) {
-    console.error('[Auth Boards]', err)
-    res.status(500).json({ error: 'Failed to fetch boards' })
-  }
-})
+  res.json({
+    boards: history.map(entry => {
+      const board = boardById.get(entry.boardId)
+      return {
+        id: entry.boardId,
+        title: board?.title || entry.title || 'Untitled Board',
+        lastVisited: entry.lastVisited,
+        exists: Boolean(board),
+        persistent: Boolean(board?.persistent),
+        isOwner: board?.ownerUid === req.user.uid,
+        updatedAt: board?.updatedAt || null,
+        lastEditedBy: board?.lastEditedBy || null,
+        activeSessions: countById.get(entry.boardId) || 0,
+      }
+    }),
+  })
+}))
 
 // POST /api/auth/boards/visit — record board visit
-router.post('/boards/visit', requireAuth, async (req, res) => {
-  try {
-    const { boardId, title } = req.body
-    if (!boardId) return res.status(400).json({ error: 'boardId is required' })
-
-    const board = await Board.findOne({ roomId: boardId }).lean()
-    const resolvedTitle = board?.title || title || 'Untitled Board'
-
-    await UserBoard.findOneAndUpdate(
-      { firebaseUid: req.user.uid, boardId },
-      {
-        firebaseUid: req.user.uid,
-        boardId,
-        title: resolvedTitle,
-        lastVisited: new Date(),
-      },
-      { upsert: true, new: true },
-    )
-
-    res.json({ success: true })
-  } catch (err) {
-    console.error('[Auth Board Visit]', err)
-    res.status(500).json({ error: 'Failed to record visit' })
-  }
-})
+router.post('/boards/visit', route(async (req, res) => {
+  // Validating the id as a plain string blocks operator injection such as {"$ne": null}.
+  const boardId = identifier(req.body?.boardId, 'board id')
+  const board = await Board.findOne({ roomId: boardId }, { title: 1 }).lean()
+  if (!board) return res.status(404).json({ error: 'Board not found' })
+  await UserBoard.updateOne(
+    { firebaseUid: req.user.uid, boardId },
+    { $set: { title: board.title, lastVisited: new Date() } },
+    { upsert: true },
+  )
+  res.json({ success: true })
+}))
 
 export default router

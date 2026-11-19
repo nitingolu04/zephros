@@ -3,33 +3,29 @@ import { Sun, Moon } from 'lucide-react'
 import { useThemeStore } from '@/stores/themeStore'
 
 export default function ThemeToggle() {
-  const { mode, setMode } = useThemeStore()
-
-  const toggleTheme = () => {
-    setMode(mode === 'dark' ? 'light' : 'dark')
-  }
-
-  const isDark = mode === 'dark'
+  const { resolved, setMode } = useThemeStore()
+  const isDark = resolved === 'dark'
 
   return (
-    <motion.button
-      whileHover={{ scale: 1.05 }}
-      whileTap={{ scale: 0.95 }}
-      onClick={toggleTheme}
-      className="relative flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card text-muted-foreground hover:text-foreground hover:border-accent/50 transition-all duration-300 cursor-pointer overflow-hidden"
-      title={isDark ? 'Switch to Light' : 'Switch to Dark'}
+    <button
+      type="button"
+      onClick={() => setMode(isDark ? 'light' : 'dark')}
+      className="relative flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-colors cursor-pointer overflow-hidden"
+      title={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+      aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
     >
-      <AnimatePresence mode="wait">
-        <motion.div
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.span
           key={isDark ? 'dark' : 'light'}
-          initial={false}
-          animate={{ scale: 1, opacity: 1, rotate: 0 }}
-          exit={{ scale: 0, opacity: 0, rotate: 180 }}
-          transition={{ duration: 0.3, ease: 'easeInOut' }}
+          initial={{ y: 10, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: -10, opacity: 0 }}
+          transition={{ duration: 0.18, ease: 'easeOut' }}
+          style={{ display: 'flex' }}
         >
           {isDark ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-        </motion.div>
+        </motion.span>
       </AnimatePresence>
-    </motion.button>
+    </button>
   )
 }

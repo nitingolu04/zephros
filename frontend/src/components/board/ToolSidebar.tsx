@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   MousePointer2, Hand, Pencil, Highlighter, PenLine, Square, Circle, Minus,
   ArrowUpRight, Type, StickyNote, Eraser, Crosshair, Smile, Frame,
-  Undo2, Redo2, Plus, Sparkles, Lasso, Shapes, ChevronRight, MoreHorizontal,
+  Undo2, Redo2, Plus, Lasso, Shapes, ChevronRight, MoreHorizontal, Wand2, History, ImageUp, Eye,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useBoardStore } from '@/stores/boardStore'
@@ -37,11 +37,11 @@ const penModes: { mode: PenMode; icon: typeof Pencil; label: string }[] = [
 
 const colors = [
   '#EF4444', '#F97316', '#EAB308', '#22C55E', '#06B6D4',
-  '#3B82F6', '#6366F1', '#8B5CF6', '#EC4899', '#0F172A',
+  '#3B82F6', '#D9480F', '#8B5CF6', '#EC4899', '#18181B',
 ]
 
 const strokeWidths = [1, 2, 3, 5, 8, 12]
-const quickColors = ['#EF4444', '#22C55E', '#3B82F6', '#0F172A']
+const quickColors = ['#EF4444', '#22C55E', '#3B82F6', '#18181B']
 const shapeTypes = new Set(shapeTools.map((t) => t.type))
 const noteTypes = new Set(noteTools.map((t) => t.type))
 
@@ -117,7 +117,8 @@ export default function ToolSidebar() {
     toolColor, setToolColor, toolStrokeWidth, setToolStrokeWidth,
     textFontSize, setTextFontSize, textFontFamily, setTextFontFamily,
     reactionEmoji, setReactionEmoji, addElement,
-    history, historyIndex, undo, redo,
+    history, historyIndex,
+    smartShapes, setSmartShapes, showVersionHistory, setShowVersionHistory, myRole,
   } = useBoardStore()
 
   const [lastShape, setLastShape] = useState<ToolType>('rectangle')
@@ -128,7 +129,7 @@ export default function ToolSidebar() {
   const mainBarRef = useRef<HTMLDivElement>(null)
 
   const boardId = board?.roomId
-  const canUndo = historyIndex > 0
+  const canUndo = historyIndex >= 0
   const canRedo = historyIndex < history.length - 1
 
   const currentShape = shapeTypes.has(activeTool) ? activeTool : lastShape
@@ -219,15 +220,43 @@ export default function ToolSidebar() {
     pointerEvents: 'none',
   }
 
+  if (myRole === 'viewer') {
+    return (
+      <div style={clusterStyle}>
+        <div className="floating-toolbar pointer-events-auto" style={barStyle} aria-label="View-only tools">
+          <span title="You can view this board. Ask the host for edit access."
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, padding: '6px 2px 8px', color: 'var(--color-accent)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase' }}>
+            <Eye style={{ width: 16, height: 16 }} />
+            View
+          </span>
+          <div className="toolbar-divider" />
+          <ToolbarButton compact active={activeTool === 'hand'} title="Pan (H)" onClick={() => setActiveTool('hand')}>
+            <Hand style={{ width: 17, height: 17 }} />
+          </ToolbarButton>
+          <ToolbarButton compact active={activeTool === 'laser'} title="Laser pointer" onClick={() => setActiveTool('laser')}>
+            <Crosshair style={{ width: 17, height: 17 }} />
+          </ToolbarButton>
+          <ToolbarButton compact active={activeTool === 'reaction'} title="React" onClick={() => setActiveTool('reaction')}>
+            <Smile style={{ width: 17, height: 17 }} />
+          </ToolbarButton>
+          <div className="toolbar-divider" />
+          <ToolbarButton compact active={showVersionHistory} title="Version history" onClick={() => setShowVersionHistory(!showVersionHistory)}>
+            <History style={{ width: 16, height: 16 }} />
+          </ToolbarButton>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div style={clusterStyle}>
       <div ref={mainBarRef} className="floating-toolbar pointer-events-auto" style={barStyle}>
         <div id="menu-row-quick">
-          <ToolbarButton compact className="ai-btn" title="Quick add" onClick={() => {
+          <ToolbarButton compact className="ai-btn" title="Add sticky, text or frame" onClick={() => {
             const row = mainBarRef.current?.querySelector('#menu-row-quick') as HTMLElement
             if (row) toggleMenu('quick', row)
           }}>
-            <Sparkles style={{ width: 18, height: 18 }} />
+            <Plus style={{ width: 18, height: 18 }} />
           </ToolbarButton>
         </div>
 
@@ -313,19 +342,22 @@ export default function ToolSidebar() {
 
         <input ref={importRef} type="file" accept="image/*,.pdf,application/pdf" className="hidden" onChange={(e) => { void handleImport(e) }} />
         <ToolbarButton compact title="Import image or PDF" onClick={() => importRef.current?.click()}>
-          <Plus style={{ width: 17, height: 17 }} />
+          <ImageUp style={{ width: 17, height: 17 }} />
         </ToolbarButton>
 
         <div className="toolbar-divider" />
 
         <div style={{ display: 'flex', gap: 1 }}>
-          <ToolbarButton compact title="Undo" onClick={undo} className={!canUndo ? 'opacity-40' : ''}>
+          <ToolbarButton compact title="Undo" onClick={() => socketService.applyHistory('undo')} className={!canUndo ? 'opacity-40' : ''}>
             <Undo2 style={{ width: 15, height: 15 }} />
           </ToolbarButton>
-          <ToolbarButton compact title="Redo" onClick={redo} className={!canRedo ? 'opacity-40' : ''}>
+          <ToolbarButton compact title="Redo" onClick={() => socketService.applyHistory('redo')} className={!canRedo ? 'opacity-40' : ''}>
             <Redo2 style={{ width: 15, height: 15 }} />
           </ToolbarButton>
         </div>
+        <ToolbarButton compact active={showVersionHistory} title="Version history" onClick={() => { closeMenus(); setShowVersionHistory(!showVersionHistory) }}>
+          <History style={{ width: 16, height: 16 }} />
+        </ToolbarButton>
 
         <FlyoutMenu
           open={openMenu?.id === 'quick'}
@@ -382,6 +414,22 @@ export default function ToolSidebar() {
                 <pm.icon style={{ width: 16, height: 16 }} />
               </ToolbarButton>
             ))}
+            {activeTool === 'pen' && (
+              <>
+                <div className="toolbar-divider" />
+                <ToolbarButton
+                  compact
+                  active={smartShapes}
+                  title={smartShapes ? 'Smart Shapes on: rough boxes, circles and lines snap clean' : 'Smart Shapes off'}
+                  onClick={() => {
+                    setSmartShapes(!smartShapes)
+                    toast(smartShapes ? 'Smart Shapes off' : 'Smart Shapes on', { id: 'smart-shapes', description: smartShapes ? undefined : 'Draw a rough box, circle or line with the pen.' })
+                  }}
+                >
+                  <Wand2 style={{ width: 16, height: 16 }} />
+                </ToolbarButton>
+              </>
+            )}
 
             {activeTool === 'eraser' && (
               <>
@@ -425,7 +473,7 @@ export default function ToolSidebar() {
                       position: 'absolute', left: 'calc(100% + 8px)', top: 0, zIndex: 50,
                       borderRadius: 14, border: '1px solid var(--color-border)',
                       background: 'var(--color-card)', padding: 12,
-                      boxShadow: '0 8px 32px rgba(0,0,0,0.15)', minWidth: 150,
+                      boxShadow: 'var(--shadow-lg)', minWidth: 150,
                     }}
                   >
                     <p className="toolbar-panel-label">Color</p>
@@ -454,7 +502,7 @@ export default function ToolSidebar() {
                           style={{
                             display: 'flex', alignItems: 'center', gap: 8,
                             padding: '5px 8px', borderRadius: 8, border: 'none', cursor: 'pointer',
-                            background: toolStrokeWidth === w ? 'rgba(99,102,241,0.12)' : 'transparent',
+                            background: toolStrokeWidth === w ? 'var(--color-accent-soft)' : 'transparent',
                             color: toolStrokeWidth === w ? 'var(--color-accent)' : 'var(--color-foreground)',
                           }}
                         >

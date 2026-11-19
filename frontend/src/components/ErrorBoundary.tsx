@@ -17,7 +17,7 @@ export default class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
-    console.error('[Aerix] Render error:', error, info.componentStack)
+    console.error('[Zephros] Render error:', error, info.componentStack)
   }
 
   render() {
@@ -40,7 +40,7 @@ export default class ErrorBoundary extends Component<Props, State> {
             onClick={() => { window.location.href = '/' }}
             style={{
               marginTop: 8, borderRadius: 10, border: 'none', padding: '10px 18px',
-              background: '#6366F1', color: 'white', fontWeight: 600, cursor: 'pointer',
+              background: 'var(--color-ink)', color: 'var(--color-ink-foreground)', fontWeight: 600, cursor: 'pointer',
             }}
           >
             Back to homepage

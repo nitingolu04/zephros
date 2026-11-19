@@ -53,7 +53,7 @@ export function useRecorder(stageContainerRef: React.RefObject<HTMLElement | nul
       }
       recorder.onstop = async () => {
         const blob = new Blob(chunksRef.current, { type: 'video/webm' })
-        const filename = `Aerix-recording-${Date.now()}.webm`
+        const filename = `Zephros-recording-${Date.now()}.webm`
 
         if (isDriveConfigured()) {
           try {

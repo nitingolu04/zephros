@@ -218,7 +218,14 @@ export function useWebRTC(boardId: string) {
     leftCallRef.current = false
     registerInRoomRef.current()
     try {
-      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false })
+      // Full-HD capture for readable text. `selfBrowserSurface: 'exclude'` (Chrome) hides this tab
+      // from the picker, avoiding the endless mirror you get when sharing the board itself.
+      const stream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 15, max: 30 } },
+        audio: false,
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
+      } as DisplayMediaStreamOptions)
       screenStreamRef.current = stream
       setLocalScreenStream(stream)
       isSharingRef.current = true
@@ -435,7 +442,7 @@ export function useWebRTC(boardId: string) {
         upsertParticipant({
           sessionId: data.sessionId,
           username: data.username || existing?.username || 'User',
-          color: data.color || existing?.color || '#6366F1',
+          color: data.color || existing?.color || '#D9480F',
           audioEnabled: data.audioEnabled,
           videoEnabled: data.videoEnabled,
           isLocal: data.sessionId === sessionId,

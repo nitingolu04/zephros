@@ -20,7 +20,7 @@ export function generateUsername(): string {
 
 export function generateColor(): string {
   const colors = [
-    '#6366F1', '#8B5CF6', '#A855F7', '#EC4899', '#F43F5E',
+    '#D9480F', '#0F766E', '#B45309', '#DB2777', '#E11D48',
     '#F97316', '#EAB308', '#22C55E', '#14B8A6', '#06B6D4',
     '#3B82F6', '#2563EB',
   ]

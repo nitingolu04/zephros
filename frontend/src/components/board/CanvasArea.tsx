@@ -2,9 +2,11 @@ import { useRef, useCallback, useState, useEffect } from 'react'
 import { Stage, Layer, Rect, Circle, Line, Arrow, Text, Group } from 'react-konva'
 import { Grid3x3, Minus, Plus, Maximize2, Magnet } from 'lucide-react'
 import type Konva from 'konva'
-import { useBoardStore } from '@/stores/boardStore'
+import { useBoardStore, VIEWER_TOOLS } from '@/stores/boardStore'
 import { socketService } from '@/services/socket'
 import { generateId } from '@/lib/utils'
+import { recognizeShape } from '@/lib/shapeRecognition'
+import { toast } from 'sonner'
 import { createFrameElement } from '@/lib/canvasImport'
 import { CanvasImageNode, CanvasFrameNode } from '@/components/board/CanvasNodes'
 import type { CanvasElement, CursorPosition } from '@/types'
@@ -18,6 +20,9 @@ interface Props {
 function snapValue(value: number, enabled: boolean) {
   return enabled ? Math.round(value / GRID_SIZE) * GRID_SIZE : value
 }
+
+/** Canvas selection highlight (Konva draws to a canvas, so CSS variables don't apply). */
+const SELECTION_COLOR = '#2563EB'
 
 function getPenStyle(penMode: string, toolColor: string, toolStrokeWidth: number) {
   if (penMode === 'highlighter') {
@@ -36,7 +41,7 @@ export default function CanvasArea({ boardId }: Props) {
   const {
     elements, selectedElementIds, activeTool, penMode, toolColor, toolStrokeWidth,
     stageScale, stagePosition, cursors, laserPoints, canvasReactions, reactionEmoji,
-    drawingUsers, showGrid, snapToGrid,
+    drawingUsers, showGrid, snapToGrid, smartShapes,
     addElement, updateElement, selectElement, clearSelection,
     setStageScale, setStagePosition, deleteElement, setActiveTool,
     setShowGrid, setSnapToGrid, fitToView,
@@ -109,6 +114,7 @@ export default function CanvasArea({ boardId }: Props) {
 
   const handleElementDblClick = useCallback((el: CanvasElement) => {
     if (el.type !== 'text' && el.type !== 'sticky') return
+    if (useBoardStore.getState().myRole === 'viewer') return
     const stage = stageRef.current
     if (!stage) return
 
@@ -139,6 +145,8 @@ export default function CanvasArea({ boardId }: Props) {
   }, [stageScale, stagePosition])
 
   const handleMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent>) => {
+    // Panning, pointing and reacting never change the board, so viewers (and a reconnecting client) may do them.
+    if (!VIEWER_TOOLS.includes(activeTool) && !socketService.canEdit(boardId)) return
     if (editingElementId) {
       finishTextEditing()
       return
@@ -296,6 +304,21 @@ export default function CanvasArea({ boardId }: Props) {
     const penStyle = getPenStyle(penMode, toolColor, toolStrokeWidth)
 
     if (activeTool === 'pen' && drawingPoints.length > 2) {
+      // Smart Shapes: a rough box / circle / line drawn with the plain pen becomes a clean shape.
+      const shape = smartShapes && penMode === 'pen' ? recognizeShape(drawingPoints) : null
+      if (shape) {
+        const now = new Date().toISOString()
+        const el: CanvasElement = {
+          id: generateId(), boardId, ...shape,
+          stroke: penStyle.stroke, strokeWidth: penStyle.strokeWidth,
+          draggable: true, createdAt: now, updatedAt: now,
+        }
+        addElement(el)
+        socketService.emitAddElement(boardId, el)
+        setDrawingPoints([])
+        toast(`Smart shape: ${shape.type}`, { id: 'smart-shape', duration: 1200 })
+        return
+      }
       const el: CanvasElement = {
         id: generateId(), boardId, type: 'pen',
         x: 0, y: 0, points: drawingPoints,
@@ -347,7 +370,7 @@ export default function CanvasArea({ boardId }: Props) {
       setNewShapeStart(null)
       setTempElement(null)
     }
-  }, [isDrawing, activeTool, boardId, drawingPoints, newShapeStart, tempElement, toolColor, toolStrokeWidth, penMode, addElement, getPointerPos, setDrawingPresence, elements])
+  }, [isDrawing, activeTool, boardId, drawingPoints, newShapeStart, tempElement, toolColor, toolStrokeWidth, penMode, smartShapes, addElement, getPointerPos, setDrawingPresence, elements])
 
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
     e.evt.preventDefault()
@@ -368,7 +391,7 @@ export default function CanvasArea({ boardId }: Props) {
 
   const handleElementClick = useCallback((el: CanvasElement, e?: Konva.KonvaEventObject<MouseEvent>) => {
     if (activeTool === 'eraser') {
-      e?.cancelBubble && (e.cancelBubble = true)
+      if (e) e.cancelBubble = true
       deleteElement(el.id)
       socketService.emitDeleteElement(boardId, el.id)
       return
@@ -412,7 +435,7 @@ export default function CanvasArea({ boardId }: Props) {
         return (
           <Rect key={el.id} {...commonProps}
             x={el.x} y={el.y} width={el.width || 100} height={el.height || 100}
-            fill={el.fill} stroke={isSelected ? '#6366F1' : el.stroke}
+            fill={el.fill} stroke={isSelected ? SELECTION_COLOR : el.stroke}
             strokeWidth={isSelected ? 2 : el.strokeWidth}
             cornerRadius={8} rotation={el.rotation}
           />
@@ -422,7 +445,7 @@ export default function CanvasArea({ boardId }: Props) {
           <Circle key={el.id} {...commonProps}
             x={el.x + (el.width || 50) / 2} y={el.y + (el.height || 50) / 2}
             radius={Math.min(el.width || 50, el.height || 50) / 2}
-            fill={el.fill} stroke={isSelected ? '#6366F1' : el.stroke}
+            fill={el.fill} stroke={isSelected ? SELECTION_COLOR : el.stroke}
             strokeWidth={isSelected ? 2 : el.strokeWidth}
           />
         )
@@ -430,7 +453,7 @@ export default function CanvasArea({ boardId }: Props) {
         return (
           <Line key={el.id} {...commonProps}
             points={el.points || []}
-            stroke={isSelected ? '#6366F1' : el.stroke}
+            stroke={isSelected ? SELECTION_COLOR : el.stroke}
             strokeWidth={isSelected ? 2 : el.strokeWidth}
             lineCap="round"
           />
@@ -439,7 +462,7 @@ export default function CanvasArea({ boardId }: Props) {
         return (
           <Arrow key={el.id} {...commonProps}
             points={el.points || []}
-            stroke={isSelected ? '#6366F1' : el.stroke}
+            stroke={isSelected ? SELECTION_COLOR : el.stroke}
             strokeWidth={isSelected ? 2 : el.strokeWidth}
             fill={el.stroke} pointerLength={10} pointerWidth={10}
             lineCap="round"
@@ -449,7 +472,7 @@ export default function CanvasArea({ boardId }: Props) {
         return (
           <Line key={el.id} {...commonProps}
             points={el.points || []}
-            stroke={isSelected ? '#6366F1' : el.stroke}
+            stroke={isSelected ? SELECTION_COLOR : el.stroke}
             strokeWidth={el.strokeWidth || 2}
             opacity={el.opacity ?? 1}
             tension={0.5} lineCap="round" lineJoin="round"
@@ -477,7 +500,7 @@ export default function CanvasArea({ boardId }: Props) {
               width={el.width || 200} height={el.height || 160}
               fill={el.fill || '#FEF3C7'}
               cornerRadius={el.cornerRadius || 12}
-              stroke={isSelected ? '#6366F1' : 'rgba(0,0,0,0.08)'}
+              stroke={isSelected ? SELECTION_COLOR : 'rgba(0,0,0,0.08)'}
               strokeWidth={isSelected ? 2 : 1}
               shadowColor="rgba(0,0,0,0.12)" shadowBlur={10} shadowOffsetY={4}
             />
@@ -581,7 +604,7 @@ export default function CanvasArea({ boardId }: Props) {
           {isDrawing && tempElement && activeTool === 'frame' && (
             <Rect x={tempElement.x} y={tempElement.y}
               width={tempElement.width} height={tempElement.height}
-              fill="rgba(99,102,241,0.06)" stroke={toolColor} strokeWidth={2} dash={[12, 6]} cornerRadius={8}
+              fill="rgba(24,24,27,0.03)" stroke={toolColor} strokeWidth={2} dash={[12, 6]} cornerRadius={8}
             />
           )}
         </Layer>
@@ -652,13 +675,13 @@ export default function CanvasArea({ boardId }: Props) {
 
       {/* Bottom-right canvas controls */}
       <div
-        className="canvas-controls pointer-events-auto absolute bottom-5 right-5 z-20 flex items-center gap-1 p-1.5"
+        className="canvas-controls pointer-events-auto absolute bottom-4 right-4 z-20 flex items-center gap-0.5 p-1.5"
       >
         <button
           type="button"
           title={showGrid ? 'Hide grid' : 'Show grid'}
           onClick={() => setShowGrid(!showGrid)}
-          className={`toolbar-btn ${showGrid ? 'active' : ''}`}
+          className={`toolbar-btn canvas-controls-optional ${showGrid ? 'active' : ''}`}
           style={{ width: 36, height: 36 }}
         >
           <Grid3x3 style={{ width: 16, height: 16 }} />
@@ -667,12 +690,12 @@ export default function CanvasArea({ boardId }: Props) {
           type="button"
           title={snapToGrid ? 'Disable snap' : 'Snap to grid'}
           onClick={() => setSnapToGrid(!snapToGrid)}
-          className={`toolbar-btn ${snapToGrid ? 'active' : ''}`}
+          className={`toolbar-btn canvas-controls-optional ${snapToGrid ? 'active' : ''}`}
           style={{ width: 36, height: 36 }}
         >
           <Magnet style={{ width: 16, height: 16 }} />
         </button>
-        <div style={{ width: 1, height: 24, background: 'var(--color-border)', margin: '0 4px' }} />
+        <div className="canvas-controls-optional" style={{ width: 1, height: 24, background: 'var(--color-border)', margin: '0 4px' }} />
         <button type="button" title="Zoom out" onClick={zoomOut} className="toolbar-btn" style={{ width: 36, height: 36 }}>
           <Minus style={{ width: 16, height: 16 }} />
         </button>

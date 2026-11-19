@@ -1,57 +1,79 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { motion } from 'framer-motion'
-import { ArrowRight, Zap, Users, Shield, Layers, Clock, ChevronDown, Sparkles, Share2, Eye, MousePointerClick } from 'lucide-react'
-import Navbar from '@/components/layout/Navbar'
-import DotGrid from '@/components/ui/DotGrid'
-import { api } from '@/services/api'
+import { motion, AnimatePresence, useInView, useReducedMotion, animate } from 'framer-motion'
+import {
+  ArrowRight, ArrowUpRight, Plus, Minus, Wand2, History, Mic, MonitorUp, MessageSquare, Lock, Download, Layers,
+  MousePointer2, Pencil, StickyNote, Shapes, Frame, Highlighter, Laugh, Type,
+} from 'lucide-react'
 import { toast } from 'sonner'
-import { useState, useEffect, useCallback, type CSSProperties } from 'react'
-import { useThemeStore } from '@/stores/themeStore'
+import Navbar from '@/components/layout/Navbar'
+import Logo from '@/components/ui/Logo'
+import HeroBoard from '@/components/landing/HeroBoard'
+import StoryScroll from '@/components/landing/StoryScroll'
+import UseCases from '@/components/landing/UseCases'
+import { Reveal, WordReveal, useSmoothScroll, container, EASE } from '@/components/landing/motion'
+import { api } from '@/services/api'
 import { useAuthStore } from '@/stores/authStore'
 
-const fadeUp = {
-  hidden: { opacity: 1, y: 0 },
-  visible: (i: number) => ({ opacity: 1, y: 0, transition: { delay: i * 0.05, duration: 0.3, ease: 'easeOut' as const } }),
-}
+const marquee = [
+  [Pencil, 'Pen & marker'], [Highlighter, 'Highlighter'], [Shapes, 'Shapes'], [StickyNote, 'Sticky notes'],
+  [Type, 'Rich text'], [Frame, 'Frames'], [MousePointer2, 'Live cursors'], [Laugh, 'Reactions'],
+  [Mic, 'Voice & video'], [MonitorUp, 'Screen share'], [MessageSquare, 'Chat'], [Download, 'Export'],
+] as const
 
 const features = [
-  { icon: Zap, title: 'Instant Boards', desc: 'Create a whiteboard in one click. Share a link and collaborate immediately.', gradient: 'linear-gradient(135deg,#F59E0B,#F97316)' },
-  { icon: Users, title: 'Live Multiplayer', desc: 'See cursors, drawings, chat, and presence updates in real time.', gradient: 'linear-gradient(135deg,#3B82F6,#06B6D4)' },
-  { icon: Shield, title: 'Google Sign-In', desc: 'Secure login with your Google account. Your boards stay in your workspace.', gradient: 'linear-gradient(135deg,#10B981,#14B8A6)' },
-  { icon: Layers, title: 'Rich Canvas', desc: 'Shapes, stickies, pen, laser pointer, reactions, and more.', gradient: 'linear-gradient(135deg,#8B5CF6,#EC4899)' },
-  { icon: Clock, title: 'Save or Go Ephemeral', desc: 'Save boards you want to keep, or let temporary sessions auto-clean when done.', gradient: 'linear-gradient(135deg,#EF4444,#F43F5E)' },
-  { icon: Share2, title: 'Voice, Video & Share', desc: 'Built-in mic, camera, screen share panel, and one-link board sharing.', gradient: 'linear-gradient(135deg,#6366F1,#8B5CF6)' },
+  { icon: Layers, title: 'Real-time canvas', body: 'Every stroke, shape and sticky syncs to everyone on the board instantly, with presence and live cursors.', span: 2, tone: 'var(--color-note-yellow)' },
+  { icon: Wand2, title: 'Smart Shapes', body: 'Draw a rough box, circle or line and it snaps into a clean shape.', badge: 'New', tone: 'var(--color-note-sky)' },
+  { icon: History, title: 'Version history', body: 'Snapshot a board and restore any earlier version in one click.', badge: 'New', tone: 'var(--color-note-mint)' },
+  { icon: Mic, title: 'Voice & video', body: 'Opt-in mic and camera on every board. No extra app.', tone: 'var(--color-note-pink)' },
+  { icon: MonitorUp, title: 'Screen share', body: 'A resizable side panel with laser pointer and reactions.', tone: 'var(--color-note-sky)' },
+  { icon: MessageSquare, title: 'Chat that sticks', body: '@mentions, emoji reactions, and history kept on your device.', tone: 'var(--color-note-yellow)' },
+  { icon: Lock, title: 'Private boards', body: 'Add a password, require sign-in, or lock the room once everyone has arrived.', span: 2, tone: 'var(--color-note-mint)' },
 ]
 
-const steps = [
-  { num: '01', title: 'Sign in & Create', desc: 'Use Google sign-in, then create a board from the homepage.', emoji: '🚀' },
-  { num: '02', title: 'Share the Link', desc: 'Copy the board URL and invite teammates or friends.', emoji: '🔗' },
-  { num: '03', title: 'Collaborate Live', desc: 'Draw, chat, talk on mic, share screen, and react together.', emoji: '✨' },
-  { num: '04', title: 'Save What Matters', desc: 'Click Save on important boards so they stay in My Boards.', emoji: '💾' },
+const stats = [
+  { value: 13, label: 'canvas tools' },
+  { value: 3, label: 'pen styles' },
+  { value: 1, label: 'link to invite' },
+  { value: 0, label: 'installs needed' },
 ]
 
 const faqs = [
-  { q: 'Do I need an account?', a: 'Yes. Sign in with Google to create or join boards. This keeps your workspace and board history secure.' },
-  { q: 'How long do boards last?', a: 'Ephemeral boards are removed after everyone leaves. Saved boards stay available in My Boards until you delete them.' },
-  { q: 'Can I use voice and video?', a: 'Yes. Each board has mic, camera, and screen share controls at the bottom of the canvas.' },
-  { q: 'Can I export my work?', a: 'Yes. Export PNG or JSON from the board sidebar. You can also record the canvas session.' },
-  { q: 'How many people can join?', a: 'Aerix works well for small teams and study groups — typically up to 20 concurrent users per board.' },
+  { q: 'Do I need an account?', a: 'No. Anyone can create or join a temporary board. Sign in with Google to save boards and find them later on your dashboard.' },
+  { q: 'How long do boards last?', a: 'Temporary boards are cleaned up a couple of minutes after the last person leaves. Saved boards stay until the owner deletes them.' },
+  { q: 'Can I keep a board private?', a: 'Yes. The owner can set a password, require Google sign-in, or lock the board so no new participants can join.' },
+  { q: 'Where is version history kept?', a: 'On the server, with the board. Versions are saved automatically every few minutes while people work, and restoring one updates the live board for everyone.' },
+  { q: 'Can I export my work?', a: 'Export the canvas as PNG, PDF or JSON, record the session, and optionally upload recordings to Google Drive.' },
+  { q: 'How many people can join?', a: 'Zephros is built for small teams, classes and study groups — it works well with up to about 20 people on a board.' },
 ]
 
-// Shared container style for consistent centering
-const section = (maxW = 960): CSSProperties => ({
-  width: '100%', maxWidth: maxW, marginLeft: 'auto', marginRight: 'auto', padding: '0 32px', boxSizing: 'border-box' as const,
-})
+function CountUp({ to }: { to: number }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const inView = useInView(ref, { once: true, margin: '-10%' })
+  const reduce = useReducedMotion()
+  useEffect(() => {
+    if (!inView || !ref.current) return
+    if (reduce) { ref.current.textContent = String(to); return }
+    const controls = animate(0, to, { duration: 1.4, ease: EASE, onUpdate: v => { if (ref.current) ref.current.textContent = String(Math.round(v)) } })
+    return () => controls.stop()
+  }, [inView, to, reduce])
+  return <span ref={ref}>0</span>
+}
+
+function parseBoardId(input: string) {
+  const value = input.trim()
+  if (!value.includes('/board/')) return value
+  return value.split('/board/').pop()?.split(/[?#]/)[0] || ''
+}
 
 export default function LandingPage() {
+  useSmoothScroll()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const user = useAuthStore((s) => s.user)
-  const { resolved } = useThemeStore()
+  const user = useAuthStore(s => s.user)
   const [joinId, setJoinId] = useState('')
-  const [openFaq, setOpenFaq] = useState<number | null>(null)
+  const [openFaq, setOpenFaq] = useState<number | null>(0)
   const [creating, setCreating] = useState(false)
-  const isDark = resolved === 'dark'
 
   const handleCreate = useCallback(async () => {
     if (creating) return
@@ -60,10 +82,10 @@ export default function LandingPage() {
     setCreating(false)
     if (res.success && res.data) {
       if (user) api.recordBoardVisit(res.data.boardId, 'Untitled Board').catch(() => {})
-      toast.success('Board created!')
+      toast.success('Board created')
       navigate(`/board/${res.data.boardId}`)
     } else {
-      toast.error(res.error || 'Failed to create board — server may be waking up, try again')
+      toast.error(res.error || 'Failed to create board — the server may be waking up, try again')
     }
   }, [creating, navigate, user])
 
@@ -74,200 +96,196 @@ export default function LandingPage() {
     }
   }, [searchParams, user, handleCreate, navigate])
 
-  const handleJoin = () => {
-    const input = joinId.trim()
-    if (!input) {
-      toast.error('Please enter a board ID or link')
-      return
-    }
-
-    let boardId = input
-    if (input.includes('/board/')) {
-      boardId = input.split('/board/').pop()?.split('?')[0].split('#')[0] || ''
-    }
-
-    if (!boardId) return
+  const handleJoin = (e?: React.FormEvent) => {
+    e?.preventDefault()
+    const boardId = parseBoardId(joinId)
+    if (!boardId) { toast.error('Paste a board link or ID'); return }
     navigate(`/board/${boardId}`)
   }
 
+  const createButton = (size: 'btn-lg' | '' = 'btn-lg') => (
+    <button type="button" onClick={handleCreate} disabled={creating} className={`btn btn-primary ${size}`}>
+      {creating
+        ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
+        : <>Start a board <ArrowRight style={{ width: 18, height: 18 }} /></>}
+    </button>
+  )
+
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--color-background)', overflowX: 'hidden' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--color-background)', overflowX: 'clip' }}>
       <Navbar />
 
-      {/* ══ HERO ══ */}
-      <section style={{ position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', paddingTop: 96 }}>
-        <DotGrid dotSize={isDark ? 3 : 2} gap={isDark ? 28 : 32} baseColor={isDark ? '#1e1e30' : '#d4d4e0'} activeColor={isDark ? '#6366F1' : '#4F46E5'} proximity={140} />
-        <div style={{ position: 'relative', zIndex: 10, textAlign: 'center', ...section(700) }}>
-          <motion.div custom={0} variants={fadeUp} initial="hidden" animate="visible" style={{ marginBottom: 32 }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, borderRadius: 999, border: '1px solid rgba(99,102,241,0.2)', background: 'rgba(99,102,241,0.08)', padding: '10px 20px', fontSize: 14, fontWeight: 600, color: 'var(--color-accent)' }}>
-              <Sparkles style={{ width: 16, height: 16 }} /> Real-time collaborative whiteboard
+      {/* ── Hero ── */}
+      <section style={{ position: 'relative', paddingTop: 'clamp(120px, 16vh, 168px)', paddingBottom: 64 }}>
+        <div aria-hidden className="dot-grid" style={{ position: 'absolute', inset: 0, opacity: 0.55, maskImage: 'radial-gradient(ellipse 70% 55% at 50% 30%, #000 30%, transparent 75%)', WebkitMaskImage: 'radial-gradient(ellipse 70% 55% at 50% 30%, #000 30%, transparent 75%)' }} />
+        <div style={{ ...container(1120), position: 'relative', textAlign: 'center' }}>
+          <motion.a href="#features" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, ease: EASE }}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '6px 6px 6px 14px', borderRadius: 999, border: '1px solid var(--color-border)', background: 'var(--color-card)', fontSize: 13, color: 'var(--color-foreground)', textDecoration: 'none', boxShadow: 'var(--shadow-sm)' }}>
+            New: Smart Shapes & version history
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', borderRadius: 999, background: 'var(--color-muted)', fontSize: 12 }}>See what's new <ArrowUpRight style={{ width: 12, height: 12 }} /></span>
+          </motion.a>
+
+          <h1 className="text-balance" style={{ fontSize: 'clamp(44px, 7.6vw, 104px)', fontWeight: 600, letterSpacing: '-0.045em', lineHeight: 0.98, margin: '28px auto 0', maxWidth: 980 }}>
+            <WordReveal text="Think together," delay={0.1} />{' '}
+            <span className="font-display" style={{ fontStyle: 'italic', fontWeight: 400, letterSpacing: '-0.02em' }}>
+              <WordReveal text="on one canvas." delay={0.3} />
             </span>
-          </motion.div>
-          <motion.h1 custom={1} variants={fadeUp} initial="hidden" animate="visible" className="shiny-text" style={{ fontSize: 'clamp(48px, 10vw, 96px)', fontWeight: 800, lineHeight: 1.05, letterSpacing: '-0.03em', marginBottom: 24 }}>
-            Aerix
-          </motion.h1>
-          <motion.p custom={2} variants={fadeUp} initial="hidden" animate="visible" style={{ fontSize: 18, lineHeight: 1.6, color: 'var(--color-muted-foreground)', marginBottom: 40, maxWidth: 520, marginLeft: 'auto', marginRight: 'auto' }}>
-            Collaborate on a live whiteboard with drawing tools, chat, voice, video, and screen share. Sign in with Google, share one link, and work together in real time.
+          </h1>
+
+          <motion.p initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.55, ease: EASE }}
+            className="text-pretty" style={{ fontSize: 'clamp(16px, 1.5vw, 19px)', lineHeight: 1.6, color: 'var(--color-muted-foreground)', maxWidth: 560, margin: '24px auto 0' }}>
+            Zephros is a real-time whiteboard with voice, video and screen share built in. Share one link and draw, talk and plan together — no install, no sign-up to start.
           </motion.p>
-          <motion.div custom={3} variants={fadeUp} initial="hidden" animate="visible" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 16 }}>
-            <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }} onClick={handleCreate} disabled={creating}
-              style={{ display: 'flex', height: 56, alignItems: 'center', gap: 12, borderRadius: 16, background: 'var(--color-accent)', padding: '0 40px', fontSize: 16, fontWeight: 600, color: 'white', border: 'none', cursor: 'pointer', boxShadow: '0 0 30px rgba(99,102,241,0.3)' }}>
-              {creating ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" /> : <><span>Create Board</span><ArrowRight style={{ width: 20, height: 20 }} /></>}
-            </motion.button>
-            <div style={{ display: 'flex', height: 56, alignItems: 'center', borderRadius: 16, border: '1px solid var(--color-border)', background: 'color-mix(in srgb, var(--color-card) 60%, transparent)', overflow: 'hidden' }}>
-              <input type="text" placeholder="Paste board ID..." value={joinId} onChange={e => setJoinId(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleJoin()}
-                style={{ height: '100%', width: 180, background: 'transparent', border: 'none', padding: '0 20px', fontSize: 14, color: 'var(--color-foreground)', outline: 'none' }} />
-              <button onClick={handleJoin} style={{ height: '100%', padding: '0 20px', fontSize: 14, fontWeight: 600, color: 'var(--color-foreground)', background: 'none', borderLeft: '1px solid var(--color-border)', borderTop: 'none', borderBottom: 'none', borderRight: 'none', cursor: 'pointer' }}>Join</button>
-            </div>
+
+          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.8, delay: 0.7, ease: EASE }}
+            style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: 12, marginTop: 36 }}>
+            {createButton()}
+            <form onSubmit={handleJoin} style={{ display: 'flex', alignItems: 'center', height: 52, borderRadius: 999, border: '1px solid var(--color-border-strong)', background: 'var(--color-card)', padding: 4, paddingLeft: 18 }}>
+              <input aria-label="Board link or ID" placeholder="Paste a board link…" value={joinId} onChange={e => setJoinId(e.target.value)}
+                style={{ width: 'min(200px, 46vw)', border: 'none', background: 'transparent', outline: 'none', fontSize: 15, color: 'var(--color-foreground)' }} />
+              <button type="submit" className="btn btn-ghost btn-sm" style={{ height: 42, border: 'none', background: 'var(--color-muted)' }}>Join</button>
+            </form>
           </motion.div>
 
-          {/* Preview */}
-          <motion.div custom={5} variants={fadeUp} initial="hidden" animate="visible" style={{ marginTop: 64, borderRadius: 16, border: '1px solid var(--color-border)', background: 'color-mix(in srgb, var(--color-card) 60%, transparent)', padding: 6, boxShadow: '0 20px 40px rgba(0,0,0,0.1)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px' }}>
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#EF4444', opacity: 0.6 }} />
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#F59E0B', opacity: 0.6 }} />
-              <div style={{ width: 10, height: 10, borderRadius: '50%', background: '#22C55E', opacity: 0.6 }} />
-              <div style={{ flex: 1, marginLeft: 12, borderRadius: 8, background: 'var(--color-surface-2)', padding: '4px 12px', textAlign: 'center' }}>
-                <span style={{ fontSize: 10, color: 'var(--color-muted-foreground)', opacity: 0.5 }}>Aerix.app/board/abc-123</span>
-              </div>
-            </div>
-            <div style={{ position: 'relative', height: 220, overflow: 'hidden', borderRadius: 12, background: 'var(--color-surface-1)' }}>
-              <DotGrid dotSize={2} gap={20} baseColor={isDark ? '#1a1a2e' : '#e8e8f0'} activeColor="#6366F1" proximity={80} />
-              <motion.div animate={{ x: [0, 8, 0], y: [0, -4, 0] }} transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }} style={{ position: 'absolute', left: '10%', top: '15%', borderRadius: 12, background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)', padding: '12px 24px' }}>
-                <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-accent)' }}>💡 Ideas</p>
-              </motion.div>
-              <motion.div animate={{ x: [0, -6, 0], y: [0, 5, 0] }} transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }} style={{ position: 'absolute', right: '12%', top: '22%', borderRadius: 12, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.2)', padding: '12px 24px' }}>
-                <p style={{ fontSize: 12, fontWeight: 600, color: '#F59E0B' }}>📝 Notes</p>
-              </motion.div>
-              <motion.div animate={{ x: [100, 200, 150], y: [70, 120, 85] }} transition={{ duration: 7, repeat: Infinity, ease: 'easeInOut' }} style={{ position: 'absolute' }}>
-                <MousePointerClick style={{ width: 16, height: 16, color: '#3B82F6' }} />
-                <span style={{ marginLeft: 2, borderRadius: 4, background: '#3B82F6', padding: '2px 6px', fontSize: 8, fontWeight: 700, color: 'white' }}>Swift</span>
-              </motion.div>
-            </div>
-          </motion.div>
+          <div style={{ marginTop: 'clamp(56px, 8vh, 88px)' }}>
+            <HeroBoard />
+          </div>
         </div>
       </section>
 
-      {/* ══ FEATURES ══ */}
-      <section style={{ padding: '112px 0' }}>
-        <div style={{ ...section(1060), textAlign: 'center' }}>
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--color-accent)', marginBottom: 12 }}>Features</span>
-            <h2 style={{ fontSize: 36, fontWeight: 700, marginBottom: 16 }}>Everything you need, nothing you don't</h2>
-            <p style={{ color: 'var(--color-muted-foreground)', maxWidth: 420, marginLeft: 'auto', marginRight: 'auto', marginBottom: 48 }}>Built for teams, classrooms, and creative sessions.</p>
-          </motion.div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 20 }}>
+      {/* ── Capability marquee ── */}
+      <section aria-label="Tools" className="marquee" style={{ borderBlock: '1px solid var(--color-border)', padding: '18px 0', overflow: 'hidden', maskImage: 'linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent)', WebkitMaskImage: 'linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent)' }}>
+        <div className="marquee-track">
+          {[...marquee, ...marquee].map(([Icon, label], i) => (
+            <span key={i} aria-hidden={i >= marquee.length} style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: '0 28px', fontSize: 15, color: 'var(--color-muted-foreground)', whiteSpace: 'nowrap' }}>
+              <Icon style={{ width: 17, height: 17, color: 'var(--color-foreground)' }} /> {label}
+            </span>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Pinned scroll story ── */}
+      <StoryScroll />
+
+      {/* ── Bento features ── */}
+      <section id="features" style={{ padding: 'clamp(88px, 12vw, 140px) 0' }}>
+        <div style={container()}>
+          <Reveal>
+            <span className="eyebrow">Features</span>
+            <h2 className="text-balance" style={{ fontSize: 'clamp(32px, 4.4vw, 56px)', fontWeight: 600, letterSpacing: '-0.035em', lineHeight: 1.05, marginTop: 16, maxWidth: 760 }}>
+              Everything a team needs to think out loud, <span className="font-display" style={{ fontStyle: 'italic', fontWeight: 400 }}>nothing it doesn't.</span>
+            </h2>
+          </Reveal>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 16, marginTop: 56 }}>
             {features.map((f, i) => (
-              <motion.div key={f.title} custom={i} variants={fadeUp} initial="hidden" whileInView="visible" viewport={{ once: true }}
-                style={{ textAlign: 'left', borderRadius: 16, border: '1px solid var(--color-border)', background: 'var(--color-card)', padding: 28, transition: 'all 0.3s', cursor: 'default' }}
-                className="hover:-translate-y-1 hover:shadow-xl hover:shadow-accent/5 hover:border-accent/20"
-              >
-                <div style={{ width: 44, height: 44, borderRadius: 12, background: f.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16, boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
-                  <f.icon style={{ width: 20, height: 20, color: 'white' }} />
-                </div>
-                <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{f.title}</h3>
-                <p style={{ fontSize: 14, lineHeight: 1.6, color: 'var(--color-muted-foreground)' }}>{f.desc}</p>
-              </motion.div>
+              <Reveal key={f.title} delay={(i % 3) * 0.08} style={{ gridColumn: f.span === 2 ? 'span 2' : undefined }} className="bento-item">
+                <motion.article whileHover={{ y: -4 }} transition={{ duration: 0.25, ease: EASE }}
+                  style={{ height: '100%', minHeight: 220, borderRadius: 20, padding: 28, background: 'var(--color-card)', border: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: 12, position: 'relative', overflow: 'hidden' }}>
+                  <span style={{ width: 44, height: 44, borderRadius: 12, background: f.tone, color: '#2B2414', display: 'grid', placeItems: 'center' }}>
+                    <f.icon style={{ width: 20, height: 20 }} />
+                  </span>
+                  <div style={{ marginTop: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <h3 style={{ fontSize: 19, fontWeight: 600, letterSpacing: '-0.02em' }}>{f.title}</h3>
+                    {f.badge && <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 99, background: 'var(--color-accent-soft)', color: 'var(--color-accent)' }}>{f.badge}</span>}
+                  </div>
+                  <p style={{ color: 'var(--color-muted-foreground)', lineHeight: 1.6, maxWidth: 460 }}>{f.body}</p>
+                </motion.article>
+              </Reveal>
             ))}
           </div>
         </div>
       </section>
 
-      {/* ══ HOW IT WORKS ══ */}
-      <section style={{ padding: '112px 0', background: 'var(--color-surface-1)' }}>
-        <div style={{ ...section(760), textAlign: 'center' }}>
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--color-accent)', marginBottom: 12 }}>Process</span>
-            <h2 style={{ fontSize: 36, fontWeight: 700, marginBottom: 16 }}>How it works</h2>
-            <p style={{ color: 'var(--color-muted-foreground)', marginBottom: 48 }}>Four steps to instant collaboration.</p>
-          </motion.div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-            {steps.map((s, i) => (
-              <motion.div key={s.num} custom={i} variants={fadeUp} initial="hidden" whileInView="visible" viewport={{ once: true }}
-                style={{ display: 'flex', alignItems: 'flex-start', gap: 16, textAlign: 'left', borderRadius: 16, border: '1px solid var(--color-border)', background: 'var(--color-card)', padding: 24, transition: 'all 0.3s' }}
-                className="hover:border-accent/20"
-              >
-                <div style={{ width: 48, height: 48, borderRadius: 12, background: 'rgba(99,102,241,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>{s.emoji}</div>
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-accent)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 4 }}>Step {s.num}</div>
-                  <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4 }}>{s.title}</h3>
-                  <p style={{ fontSize: 14, color: 'var(--color-muted-foreground)', lineHeight: 1.5 }}>{s.desc}</p>
-                </div>
-              </motion.div>
-            ))}
+      {/* ── Stats ── */}
+      <section style={{ borderBlock: '1px solid var(--color-border)', background: 'var(--color-card)' }}>
+        <div style={{ ...container(), display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))' }}>
+          {stats.map((s, i) => (
+            <Reveal key={s.label} delay={i * 0.08} style={{ padding: '48px 24px', borderLeft: i ? '1px solid var(--color-border)' : 'none', textAlign: 'center' }}>
+              <div className="font-display" style={{ fontSize: 'clamp(56px, 7vw, 88px)', lineHeight: 1 }}><CountUp to={s.value} /></div>
+              <div style={{ marginTop: 8, color: 'var(--color-muted-foreground)' }}>{s.label}</div>
+            </Reveal>
+          ))}
+        </div>
+      </section>
+
+      {/* ── Horizontal use cases ── */}
+      <UseCases />
+
+      {/* ── FAQ ── */}
+      <section id="faq" style={{ padding: 'clamp(88px, 12vw, 140px) 0', background: 'var(--color-card)', borderTop: '1px solid var(--color-border)' }}>
+        <div style={{ ...container(1120), display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: 48, alignItems: 'start' }}>
+          <Reveal>
+            <span className="eyebrow">FAQ</span>
+            <h2 style={{ fontSize: 'clamp(32px, 4vw, 48px)', fontWeight: 600, letterSpacing: '-0.035em', lineHeight: 1.05, marginTop: 16 }}>
+              Questions, <span className="font-display" style={{ fontStyle: 'italic', fontWeight: 400 }}>answered.</span>
+            </h2>
+            <p style={{ color: 'var(--color-muted-foreground)', marginTop: 16, lineHeight: 1.6, maxWidth: 360 }}>Everything you need to know before you start your first board.</p>
+          </Reveal>
+          <div>
+            {faqs.map((faq, i) => {
+              const open = openFaq === i
+              return (
+                <Reveal key={faq.q} delay={i * 0.04} style={{ borderBottom: '1px solid var(--color-border)' }}>
+                  <button type="button" onClick={() => setOpenFaq(open ? null : i)} aria-expanded={open}
+                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, padding: '22px 0', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-foreground)', fontSize: 17, fontWeight: 500, textAlign: 'left' }}>
+                    {faq.q}
+                    <span style={{ flexShrink: 0, width: 28, height: 28, borderRadius: 99, border: '1px solid var(--color-border)', display: 'grid', placeItems: 'center' }}>
+                      {open ? <Minus style={{ width: 14, height: 14 }} /> : <Plus style={{ width: 14, height: 14 }} />}
+                    </span>
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {open && (
+                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.35, ease: EASE }} style={{ overflow: 'hidden' }}>
+                        <p style={{ paddingBottom: 22, color: 'var(--color-muted-foreground)', lineHeight: 1.65, maxWidth: 560 }}>{faq.a}</p>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </Reveal>
+              )
+            })}
           </div>
         </div>
       </section>
 
-      {/* ══ REAL-TIME ══ */}
-      <section style={{ padding: '112px 0' }}>
-        <div style={{ ...section(860), textAlign: 'center' }}>
-          <motion.div initial={{ opacity: 0, y: 20 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
-            <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--color-accent)', marginBottom: 12 }}>Real-time</span>
-            <h2 style={{ fontSize: 36, fontWeight: 700, marginBottom: 16 }}>Real-time, for real</h2>
-            <p style={{ color: 'var(--color-muted-foreground)', marginBottom: 48 }}>Watch cursors move, see edits appear, feel the collaboration.</p>
-          </motion.div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', borderRadius: 16, border: '1px solid var(--color-border)', background: 'var(--color-card)', overflow: 'hidden' }}>
-            {[
-              { icon: Eye, label: 'Live Cursors', value: 'See everyone in real-time', gradient: 'linear-gradient(135deg,#3B82F6,#06B6D4)' },
-              { icon: Zap, label: 'Instant Sync', value: 'Every change syncs <50ms', gradient: 'linear-gradient(135deg,#F59E0B,#F97316)' },
-              { icon: Users, label: 'Presence', value: 'See who is on the board', gradient: 'linear-gradient(135deg,#10B981,#14B8A6)' },
-            ].map((item, i) => (
-              <div key={item.label} style={{ padding: 32, borderLeft: i > 0 ? '1px solid var(--color-border)' : 'none', transition: 'background 0.3s' }} className="hover:bg-muted/20">
-                <div style={{ width: 48, height: 48, borderRadius: 12, background: item.gradient, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', boxShadow: '0 4px 12px rgba(0,0,0,0.15)' }}>
-                  <item.icon style={{ width: 20, height: 20, color: 'white' }} />
-                </div>
-                <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>{item.label}</h3>
-                <p style={{ fontSize: 14, color: 'var(--color-muted-foreground)' }}>{item.value}</p>
-              </div>
+      {/* ── Final CTA ── */}
+      <section style={{ padding: 'clamp(88px, 12vw, 160px) 0' }}>
+        <div style={container(960)}>
+          <Reveal style={{ position: 'relative', borderRadius: 28, background: 'var(--color-ink)', color: 'var(--color-ink-foreground)', padding: 'clamp(40px, 7vw, 88px)', textAlign: 'center', overflow: 'hidden' }}>
+            {[['var(--color-note-yellow)', '-4%', '-10%', -12], ['var(--color-note-pink)', '86%', '62%', 10], ['var(--color-note-mint)', '78%', '-14%', 6]].map(([bg, left, top, r], i) => (
+              <motion.span key={i} aria-hidden initial={{ opacity: 0, scale: 0.6 }} whileInView={{ opacity: 0.9, scale: 1 }} viewport={{ once: true }} transition={{ delay: 0.2 + i * 0.1, type: 'spring', stiffness: 160, damping: 16 }}
+                style={{ position: 'absolute', left: left as string, top: top as string, width: 120, height: 120, borderRadius: 14, background: bg as string, rotate: r as number }} />
             ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ══ FAQ ══ */}
-      <section style={{ padding: '112px 0', background: 'var(--color-surface-1)' }}>
-        <div style={{ ...section(600), textAlign: 'center' }}>
-          <span style={{ display: 'inline-block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.2em', color: 'var(--color-accent)', marginBottom: 12 }}>FAQ</span>
-          <h2 style={{ fontSize: 36, fontWeight: 700, marginBottom: 48 }}>Questions & Answers</h2>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, textAlign: 'left' }}>
-            {faqs.map((faq, i) => (
-              <div key={i} style={{ borderRadius: 12, border: '1px solid var(--color-border)', background: 'var(--color-card)', overflow: 'hidden' }}>
-                <button onClick={() => setOpenFaq(openFaq === i ? null : i)}
-                  style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', padding: 20, fontSize: 14, fontWeight: 500, background: 'none', border: 'none', color: 'var(--color-foreground)', cursor: 'pointer', textAlign: 'left' }}>
-                  <span>{faq.q}</span>
-                  <ChevronDown style={{ width: 16, height: 16, color: 'var(--color-muted-foreground)', flexShrink: 0, marginLeft: 16, transform: openFaq === i ? 'rotate(180deg)' : 'none', transition: 'transform 0.3s' }} />
+            <h2 style={{ position: 'relative', fontSize: 'clamp(34px, 5vw, 64px)', fontWeight: 600, letterSpacing: '-0.04em', lineHeight: 1.02 }}>
+              Your next idea needs <span className="font-display" style={{ fontStyle: 'italic', fontWeight: 400 }}>a bigger page.</span>
+            </h2>
+            <p style={{ position: 'relative', marginTop: 18, opacity: 0.7, fontSize: 17 }}>Start a board in one click. Invite anyone with a link.</p>
+            <div style={{ position: 'relative', marginTop: 32, display: 'flex', justifyContent: 'center', gap: 12, flexWrap: 'wrap' }}>
+              <button type="button" onClick={handleCreate} disabled={creating} className="btn btn-lg" style={{ background: 'var(--color-ink-foreground)', color: 'var(--color-ink)' }}>
+                {creating ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <>Start a board <ArrowRight style={{ width: 18, height: 18 }} /></>}
+              </button>
+              {!user && (
+                <button type="button" onClick={() => navigate('/login')} className="btn btn-lg" style={{ background: 'transparent', color: 'var(--color-ink-foreground)', borderColor: 'color-mix(in srgb, var(--color-ink-foreground) 30%, transparent)' }}>
+                  Sign in to save boards
                 </button>
-                {openFaq === i && <p style={{ padding: '0 20px 20px', fontSize: 14, color: 'var(--color-muted-foreground)', lineHeight: 1.6 }}>{faq.a}</p>}
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* ══ CTA ══ */}
-      <section style={{ padding: '112px 0', textAlign: 'center' }}>
-        <div style={section(500)}>
-          <h2 style={{ fontSize: 36, fontWeight: 700, marginBottom: 16 }}>Ready to collaborate?</h2>
-          <p style={{ color: 'var(--color-muted-foreground)', marginBottom: 32 }}>Start a board in seconds. No signup required.</p>
-          <motion.button whileHover={{ scale: 1.03, y: -2 }} whileTap={{ scale: 0.97 }} onClick={handleCreate}
-            style={{ display: 'inline-flex', height: 56, alignItems: 'center', gap: 12, borderRadius: 16, background: 'var(--color-accent)', padding: '0 40px', fontSize: 16, fontWeight: 600, color: 'white', border: 'none', cursor: 'pointer', boxShadow: '0 0 30px rgba(99,102,241,0.3)' }}>
-            Create Board <ArrowRight style={{ width: 20, height: 20 }} />
-          </motion.button>
-        </div>
-      </section>
-
-      {/* ══ FOOTER ══ */}
-      <footer style={{ borderTop: '1px solid var(--color-border)', padding: '40px 0', textAlign: 'center' }}>
-        <div style={section(960)}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: 'linear-gradient(135deg,#6366F1,#A855F7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Sparkles style={{ width: 14, height: 14, color: 'white' }} />
+              )}
             </div>
-            <span style={{ fontSize: 16, fontWeight: 700 }}>Aerix</span>
+          </Reveal>
+        </div>
+      </section>
+
+      {/* ── Footer ── */}
+      <footer style={{ borderTop: '1px solid var(--color-border)', padding: '40px 0 56px' }}>
+        <div style={{ ...container(), display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 20 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <Logo size={26} />
+            <span style={{ fontSize: 14, color: 'var(--color-muted-foreground)' }}>Real-time whiteboard for teams, classes and study groups.</span>
           </div>
-          <p style={{ fontSize: 14, color: 'var(--color-muted-foreground)' }}>Anonymous real-time collaboration. No accounts. No tracking.</p>
-          <p style={{ fontSize: 12, color: 'var(--color-muted-foreground)', opacity: 0.4, marginTop: 12 }}>© {new Date().getFullYear()} Aerix</p>
+          <nav style={{ display: 'flex', gap: 20, fontSize: 14 }} aria-label="Footer">
+            {[['#product', 'Product'], ['#features', 'Features'], ['#use-cases', 'Use cases'], ['#faq', 'FAQ']].map(([href, label]) => (
+              <a key={href} href={href} style={{ color: 'var(--color-muted-foreground)', textDecoration: 'none' }}>{label}</a>
+            ))}
+          </nav>
+          <span style={{ fontSize: 13, color: 'var(--color-muted-foreground)', width: '100%' }}>© {new Date().getFullYear()} Zephros</span>
         </div>
       </footer>
     </div>

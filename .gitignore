@@ -5,6 +5,12 @@ backend/node_modules/
 
 # Build
 frontend/dist/
+*.tsbuildinfo
+
+# Project report, viva guide and research paper live outside the repo (not needed to run or deploy)
+docs/
+research-paper/
+*.docx
 
 # Environment
 .env
@@ -37,3 +43,7 @@ npm-debug.log*
 
 # Reference clones (local only)
 _ref_edumeet/
+
+# Local development database and downloaded test binaries
+.local-data/
+.cache/

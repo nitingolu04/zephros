@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Sparkles, ArrowRight } from 'lucide-react'
+import { ArrowRight } from 'lucide-react'
 import { toast } from 'sonner'
 import ThemeToggle from '@/components/ui/ThemeToggle'
+import Logo from '@/components/ui/Logo'
 import { useAuthStore } from '@/stores/authStore'
 import { isFirebaseConfigured } from '@/lib/firebase'
 
@@ -39,56 +40,37 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--color-background)' }}>
-      <div style={{ display: 'flex', justifyContent: 'flex-end', padding: 20 }}>
-        <ThemeToggle />
-      </div>
+    <div style={{ minHeight: '100vh', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 420px), 1fr))', background: 'var(--color-background)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', padding: 'clamp(20px, 4vw, 40px)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <button type="button" onClick={() => navigate('/')} aria-label="Zephros home" style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+            <Logo size={28} />
+          </button>
+          <ThemeToggle />
+        </div>
 
-      <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
         <motion.div
-          initial={{ opacity: 0, y: 24 }}
+          initial={{ opacity: 0, y: 16 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          style={{
-            width: '100%',
-            maxWidth: 420,
-            borderRadius: 20,
-            border: '1px solid var(--color-border)',
-            background: 'color-mix(in srgb, var(--color-card) 70%, transparent)',
-            backdropFilter: 'blur(12px)',
-            padding: 40,
-            textAlign: 'center',
-            boxShadow: '0 20px 50px rgba(0,0,0,0.08)',
-          }}
+          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', width: '100%', maxWidth: 400, margin: '0 auto', padding: '48px 0' }}
         >
-          <div style={{
-            width: 56, height: 56, borderRadius: 16, margin: '0 auto 20px',
-            background: 'var(--color-accent)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-            boxShadow: '0 0 30px rgba(99,102,241,0.35)',
-          }}>
-            <Sparkles style={{ width: 28, height: 28, color: 'white' }} />
-          </div>
-
-          <h1 style={{ fontSize: 28, fontWeight: 700, marginBottom: 8 }}>Welcome to Aerix</h1>
-          <p style={{ fontSize: 14, color: 'var(--color-muted-foreground)', marginBottom: 32, lineHeight: 1.6 }}>
-            Sign in with Google to create boards, collaborate in real time, and chat with your team.
+          <h1 style={{ fontSize: 'clamp(34px, 4vw, 44px)', fontWeight: 600, letterSpacing: '-0.035em', lineHeight: 1.05 }}>
+            Welcome <span className="font-display" style={{ fontStyle: 'italic', fontWeight: 400 }}>back.</span>
+          </h1>
+          <p style={{ fontSize: 15, color: 'var(--color-muted-foreground)', margin: '14px 0 32px', lineHeight: 1.6 }}>
+            Sign in to save boards, see your history, and control who can join.
           </p>
 
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
+          <button
+            type="button"
             onClick={handleGoogleSignIn}
             disabled={signingIn || loading}
-            style={{
-              display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'center', gap: 12,
-              height: 52, borderRadius: 14, border: '1px solid var(--color-border)',
-              background: 'var(--color-surface-1)', fontSize: 15, fontWeight: 600,
-              color: 'var(--color-foreground)', cursor: signingIn ? 'wait' : 'pointer',
-              opacity: signingIn ? 0.7 : 1,
-            }}
+            className="btn btn-lg"
+            style={{ width: '100%', background: 'var(--color-card)', borderColor: 'var(--color-border-strong)', color: 'var(--color-foreground)', boxShadow: 'var(--shadow-sm)' }}
           >
             {signingIn ? (
-              <div className="h-5 w-5 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+              <span className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
             ) : (
               <>
                 <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
@@ -98,24 +80,50 @@ export default function LoginPage() {
                   <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
                 </svg>
                 <span>Continue with Google</span>
-                <ArrowRight style={{ width: 18, height: 18, opacity: 0.6 }} />
               </>
             )}
-          </motion.button>
-
-          <button
-            onClick={() => navigate('/')}
-            style={{ marginTop: 16, background: 'none', border: 'none', fontSize: 13, color: 'var(--color-muted-foreground)', cursor: 'pointer' }}
-          >
-            ← Back to homepage
           </button>
 
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '24px 0', color: 'var(--color-muted-foreground)', fontSize: 13 }}>
+            <span style={{ flex: 1, height: 1, background: 'var(--color-border)' }} /> or <span style={{ flex: 1, height: 1, background: 'var(--color-border)' }} />
+          </div>
+
+          <button type="button" onClick={() => navigate('/')} className="btn btn-ghost btn-lg" style={{ width: '100%' }}>
+            Continue as a guest <ArrowRight style={{ width: 16, height: 16 }} />
+          </button>
+          <p style={{ marginTop: 12, fontSize: 13, color: 'var(--color-muted-foreground)', textAlign: 'center' }}>
+            Guests can create and join temporary boards.
+          </p>
+
           {!isFirebaseConfigured && (
-            <p style={{ marginTop: 20, fontSize: 12, color: '#F59E0B', lineHeight: 1.5 }}>
-              Firebase env vars are missing. Copy <code>.env.example</code> to <code>.env</code> and add your Firebase config to enable sign-in.
+            <p style={{ marginTop: 24, padding: 12, borderRadius: 12, background: 'var(--color-accent-soft)', fontSize: 13, color: 'var(--color-foreground)', lineHeight: 1.5 }}>
+              Google sign-in isn't configured yet. Copy <code>.env.example</code> to <code>.env</code> and add your Firebase keys.
             </p>
           )}
         </motion.div>
+      </div>
+
+      {/* Decorative board, hidden on small screens */}
+      <div className="hidden lg:block" style={{ padding: 16 }}>
+        <div className="canvas-grid" style={{ position: 'relative', height: '100%', borderRadius: 24, border: '1px solid var(--color-border)', overflow: 'hidden' }}>
+          {[
+            ['var(--color-note-yellow)', 'Ideas worth keeping', '16%', '18%', -4],
+            ['var(--color-note-mint)', 'Save to dashboard', '52%', '30%', 3],
+            ['var(--color-note-pink)', 'Lock the room', '24%', '56%', 2],
+            ['var(--color-note-sky)', 'Invite with a link', '58%', '64%', -3],
+          ].map(([bg, text, left, top, rotate], i) => (
+            <motion.div key={text as string}
+              initial={{ opacity: 0, scale: 0.7, rotate: (rotate as number) - 10 }}
+              animate={{ opacity: 1, scale: 1, rotate: rotate as number }}
+              transition={{ delay: 0.25 + i * 0.12, type: 'spring', stiffness: 200, damping: 16 }}
+              style={{ position: 'absolute', left: left as string, top: top as string, width: '28%', aspectRatio: '1', padding: 20, borderRadius: 8, background: bg as string, color: '#3D2E14', fontWeight: 500, fontSize: 'clamp(14px, 1.3vw, 18px)', boxShadow: '0 10px 24px rgba(24,24,27,0.12)' }}>
+              {text as string}
+            </motion.div>
+          ))}
+          <div style={{ position: 'absolute', left: 32, bottom: 28, right: 32 }}>
+            <p className="font-display" style={{ fontSize: 'clamp(26px, 2.4vw, 36px)', fontStyle: 'italic', lineHeight: 1.15 }}>From a messy idea to a shared plan, in one link.</p>
+          </div>
+        </div>
       </div>
     </div>
   )

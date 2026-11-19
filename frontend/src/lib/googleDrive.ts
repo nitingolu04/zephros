@@ -54,8 +54,8 @@ async function ensureToken(): Promise<string> {
   return requestDriveAccess()
 }
 
-async function findOrCreateAerixFolder(token: string): Promise<string> {
-  const q = encodeURIComponent("name='Aerix' and mimeType='application/vnd.google-apps.folder' and trashed=false")
+async function findOrCreateZephrosFolder(token: string): Promise<string> {
+  const q = encodeURIComponent("name='Zephros' and mimeType='application/vnd.google-apps.folder' and trashed=false")
   const search = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id)`, {
     headers: { Authorization: `Bearer ${token}` },
   })
@@ -65,7 +65,7 @@ async function findOrCreateAerixFolder(token: string): Promise<string> {
   const create = await fetch('https://www.googleapis.com/drive/v3/files', {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name: 'Aerix', mimeType: 'application/vnd.google-apps.folder' }),
+    body: JSON.stringify({ name: 'Zephros', mimeType: 'application/vnd.google-apps.folder' }),
   })
   const folder = await create.json()
   return folder.id
@@ -73,7 +73,7 @@ async function findOrCreateAerixFolder(token: string): Promise<string> {
 
 export async function uploadToGoogleDrive(file: Blob, filename: string): Promise<string> {
   const token = await ensureToken()
-  const folderId = await findOrCreateAerixFolder(token)
+  const folderId = await findOrCreateZephrosFolder(token)
 
   const metadata = { name: filename, parents: [folderId] }
   const form = new FormData()

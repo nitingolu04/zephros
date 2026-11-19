@@ -2,6 +2,7 @@ import { useEffect, useCallback, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useBoardStore } from '@/stores/boardStore'
+import { useAuthStore } from '@/stores/authStore'
 import { socketService } from '@/services/socket'
 import { api } from '@/services/api'
 import { toast } from 'sonner'
@@ -13,7 +14,9 @@ import BoardAccessGate from '@/components/board/BoardAccessGate'
 import PresentationMode from '@/components/board/PresentationMode'
 import MediaControlBar from '@/components/board/MediaControlBar'
 import ParticipantVideos from '@/components/board/ParticipantVideos'
-import ScreenSharePanel from '@/components/board/ScreenSharePanel'
+import EmptyCanvasHint from '@/components/board/EmptyCanvasHint'
+import { ScreenShareViewer, PresenterBar, type ShareLayout } from '@/components/board/ScreenSharePanel'
+import VersionHistoryPanel, { useAutoVersions } from '@/components/board/VersionHistoryPanel'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { unlockNotificationAudio, playNotificationSound } from '@/lib/notificationSound'
 import type { ToolType } from '@/types'
@@ -32,6 +35,7 @@ export default function BoardPage() {
   const [lockReason, setLockReason] = useState<'auth' | 'password' | 'locked'>('password')
   const [lockedBoardTitle, setLockedBoardTitle] = useState<string>()
   const canvasWrapRef = useRef<HTMLDivElement>(null)
+  const loadGeneration = useRef(0)
   const prevScreenSharerIdRef = useRef<string | null>(null)
 
   const {
@@ -48,14 +52,15 @@ export default function BoardPage() {
     localScreenStream,
     remoteScreenStream,
   } = useWebRTC(id || '')
+  useAutoVersions(id)
 
   const storeScreenSharer = useBoardStore((s) => s.screenSharer)
 
-  const screenStream = isLocalSharing ? localScreenStream : remoteScreenStream
-  const showScreenPanel = Boolean(
-    (isLocalSharing && localScreenStream)
-    || (!isLocalSharing && (remoteScreenStream || isViewing)),
-  )
+  const showPresenterBar = Boolean(isLocalSharing && localScreenStream)
+  const showShareViewer = Boolean(!isLocalSharing && (remoteScreenStream || isViewing))
+  // Each new presentation opens big (Focus) so the shared screen is readable straight away.
+  const [shareLayout, setShareLayout] = useState<ShareLayout>('focus')
+  useEffect(() => { setShareLayout('focus') }, [screenSharer?.sessionId])
 
   useEffect(() => {
     const unlock = () => unlockNotificationAudio()
@@ -82,12 +87,14 @@ export default function BoardPage() {
   }, [storeScreenSharer])
 
   const fetchBoard = useCallback(async (boardId: string, password?: string): Promise<PageState> => {
-    const storedPwd = password || sessionStorage.getItem(`aerix_board_pwd_${boardId}`) || undefined
+    const generation = loadGeneration.current
+    const storedPwd = password || sessionStorage.getItem(`zephros_board_pwd_${boardId}`) || undefined
     const res = await api.getBoard(boardId, {
       boardPassword: storedPwd,
       sessionId: socketService.sessionId,
     })
 
+    if (generation !== loadGeneration.current) return 'load-error'
     if (!res.success || !res.data) {
       const msg = res.error || ''
       if (/not found|expired/i.test(msg)) return 'not-found'
@@ -104,7 +111,13 @@ export default function BoardPage() {
     setBoard(res.data.board)
     setElements(res.data.elements)
     setError(null)
-    api.recordBoardVisit(boardId, res.data.board.title).catch(() => {})
+    // Board history is an account feature; guests have nothing to record.
+    if (useAuthStore.getState().user) api.recordBoardVisit(boardId, res.data.board.title).catch(() => {})
+    const editLink = new URLSearchParams(window.location.search).get('edit')
+    if (editLink) {
+      sessionStorage.setItem(`zephros_edit_link_${boardId}`, editLink)
+      window.history.replaceState(null, '', window.location.pathname)
+    }
     socketService.joinBoard(boardId, storedPwd)
     return 'ready'
   }, [setBoard, setElements, setError])
@@ -112,6 +125,7 @@ export default function BoardPage() {
   useEffect(() => {
     if (!id) return
 
+    loadGeneration.current += 1
     let cancelled = false
     setPageState('loading')
     setLoadError(null)
@@ -122,7 +136,7 @@ export default function BoardPage() {
         setLoadError('This is taking too long. The server may be waking up.')
         setPageState('load-error')
       }
-    }, 20000)
+    }, 75000)
 
     const run = async () => {
       let state = await fetchBoard(id)
@@ -153,6 +167,7 @@ export default function BoardPage() {
     void run()
 
     return () => {
+      loadGeneration.current += 1
       cancelled = true
       clearTimeout(safetyTimer)
       socketService.leaveBoard(id)
@@ -178,11 +193,12 @@ export default function BoardPage() {
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     const target = e.target as HTMLElement
+    if (pageState !== 'ready') return
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return
 
     const store = useBoardStore.getState()
 
-    if (e.key === 'Delete' || e.key === 'Backspace') {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && store.myRole !== 'viewer') {
       if (store.selectedElementIds.length > 0) {
         store.selectedElementIds.forEach((eid) => {
           store.deleteElement(eid)
@@ -192,21 +208,24 @@ export default function BoardPage() {
     }
 
     if (e.ctrlKey || e.metaKey) {
-      if (e.key === 'z') {
+      if (e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) {
-          store.redo()
+          socketService.applyHistory('redo')
         } else {
-          store.undo()
+          socketService.applyHistory('undo')
         }
-        if (id) syncFullState(id)
       }
       if (e.key === 'y') {
         e.preventDefault()
-        store.redo()
-        if (id) syncFullState(id)
+        socketService.applyHistory('redo')
       }
-      if (e.key === 'v') { e.preventDefault(); store.duplicateSelected() }
+      if (e.key.toLowerCase() === 'd' && store.myRole !== 'viewer') {
+        e.preventDefault()
+        const previousIds = new Set(store.elements.map(el => el.id))
+        store.duplicateSelected()
+        if (id) useBoardStore.getState().elements.filter(el => !previousIds.has(el.id)).forEach(el => socketService.emitAddElement(id, el))
+      }
       if (e.key === 'a' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); store.selectAll() }
     }
 
@@ -223,12 +242,7 @@ export default function BoardPage() {
       e.preventDefault()
       store.setActiveTool('arrow')
     }
-  }, [id])
-
-  const syncFullState = useCallback((boardId: string) => {
-    const elements = useBoardStore.getState().elements
-    socketService.emitSyncState(boardId, elements)
-  }, [])
+  }, [id, pageState])
 
   const handleLeaveBoard = useCallback(async () => {
     await leaveCall()
@@ -257,18 +271,18 @@ export default function BoardPage() {
       <div style={{
         minHeight: '100vh', display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', gap: 16,
-        background: '#F8FAFC',
+        background: 'var(--color-background)',
       }}
       >
         <div style={{
           width: 48, height: 48, borderRadius: '50%',
-          border: '3px solid #E2E8F0', borderTop: '3px solid #6366F1',
-          animation: 'aerix-spin 0.8s linear infinite',
+          border: '3px solid var(--color-border)', borderTop: '3px solid var(--color-ink)',
+          animation: 'zephros-spin 0.8s linear infinite',
         }}
         />
-        <p style={{ fontSize: 14, color: '#334155', fontWeight: 500 }}>Loading board…</p>
-        <p style={{ fontSize: 12, color: '#64748B' }}>First load can take a few seconds if the server was asleep</p>
-        <style>{'@keyframes aerix-spin { to { transform: rotate(360deg) } }'}</style>
+        <p style={{ fontSize: 14, color: 'var(--color-foreground)', fontWeight: 500 }}>Loading board…</p>
+        <p style={{ fontSize: 12, color: 'var(--color-muted-foreground)' }}>First load can take a few seconds if the server was asleep</p>
+        <style>{'@keyframes zephros-spin { to { transform: rotate(360deg) } }'}</style>
       </div>
     )
   }
@@ -278,18 +292,18 @@ export default function BoardPage() {
       <div style={{
         minHeight: '100vh', display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', gap: 16,
-        padding: 24, background: '#F8FAFC', textAlign: 'center',
+        padding: 24, background: 'var(--color-background)', textAlign: 'center',
       }}
       >
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0F172A' }}>Could not load board</h1>
-        <p style={{ fontSize: 14, color: '#64748B', maxWidth: 420 }}>{loadError || 'Please try again.'}</p>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--color-foreground)' }}>Could not load board</h1>
+        <p style={{ fontSize: 14, color: 'var(--color-muted-foreground)', maxWidth: 420 }}>{loadError || 'Please try again.'}</p>
         <div style={{ display: 'flex', gap: 10 }}>
           <button
             type="button"
             onClick={() => { window.location.reload() }}
             style={{
               borderRadius: 10, border: 'none', padding: '10px 20px',
-              background: '#6366F1', color: 'white', fontWeight: 600, cursor: 'pointer',
+              background: 'var(--color-ink)', color: 'var(--color-ink-foreground)', fontWeight: 600, cursor: 'pointer',
             }}
           >
             Retry
@@ -298,8 +312,8 @@ export default function BoardPage() {
             type="button"
             onClick={() => navigate('/')}
             style={{
-              borderRadius: 10, border: '1px solid #E2E8F0', padding: '10px 20px',
-              background: 'white', color: '#334155', fontWeight: 600, cursor: 'pointer',
+              borderRadius: 10, border: '1px solid var(--color-border-strong)', padding: '10px 20px',
+              background: 'var(--color-card)', color: 'var(--color-foreground)', fontWeight: 600, cursor: 'pointer',
             }}
           >
             Homepage
@@ -314,11 +328,11 @@ export default function BoardPage() {
       <div style={{
         minHeight: '100vh', display: 'flex', flexDirection: 'column',
         alignItems: 'center', justifyContent: 'center', gap: 16,
-        padding: 24, background: 'var(--color-background, #F8FAFC)', textAlign: 'center',
+        padding: 24, background: 'var(--color-background)', textAlign: 'center',
       }}
       >
-        <h1 style={{ fontSize: 22, fontWeight: 700, color: '#0F172A' }}>Board not found</h1>
-        <p style={{ fontSize: 14, color: '#64748B', maxWidth: 400 }}>
+        <h1 style={{ fontSize: 22, fontWeight: 700, color: 'var(--color-foreground)' }}>Board not found</h1>
+        <p style={{ fontSize: 14, color: 'var(--color-muted-foreground)', maxWidth: 400 }}>
           This board may have expired or the link is incorrect. Ephemeral boards are removed after everyone leaves.
         </p>
         <button
@@ -326,7 +340,7 @@ export default function BoardPage() {
           onClick={() => navigate('/')}
           style={{
             borderRadius: 10, border: 'none', padding: '10px 20px',
-            background: '#6366F1', color: 'white', fontWeight: 600, cursor: 'pointer',
+            background: 'var(--color-ink)', color: 'var(--color-ink-foreground)', fontWeight: 600, cursor: 'pointer',
           }}
         >
           Go to homepage
@@ -348,8 +362,8 @@ export default function BoardPage() {
 
   if (error) {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8FAFC' }}>
-        <p style={{ color: '#EF4444' }}>{error}</p>
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--color-background)' }}>
+        <p style={{ color: 'var(--color-destructive)' }}>{error}</p>
       </div>
     )
   }
@@ -359,7 +373,7 @@ export default function BoardPage() {
   }
 
   return (
-    <div style={{ display: 'flex', height: '100vh', flexDirection: 'column', overflow: 'hidden', background: '#F8FAFC' }}>
+    <div style={{ display: 'flex', height: '100vh', flexDirection: 'column', overflow: 'hidden', background: 'var(--color-background)' }}>
       <BoardNavbar
         boardTitle={board?.title || 'Untitled Board'}
         boardId={id || ''}
@@ -372,15 +386,32 @@ export default function BoardPage() {
 
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div ref={canvasWrapRef} style={{ display: 'flex', flex: 1, overflow: 'hidden', position: 'relative' }}>
-          <CanvasArea boardId={id || ''} />
-          <ToolSidebar />
-          {showScreenPanel && (
-            <ScreenSharePanel
-              stream={screenStream}
+          {/* Everything that floats over the canvas lives in one region, so the dock and video
+              stage stay centred on the canvas and never slide under the screen-share panel. */}
+          <div className="canvas-region">
+            <CanvasArea boardId={id || ''} />
+            <EmptyCanvasHint />
+            <ToolSidebar />
+            <VersionHistoryPanel boardId={id || ''} />
+            <ParticipantVideos />
+            <MediaControlBar
+              audioEnabled={audioEnabled}
+              videoEnabled={videoEnabled}
+              toggleAudio={toggleAudio}
+              toggleVideo={toggleVideo}
+              isLocalSharing={isLocalSharing}
+              onToggleShare={toggleShare}
+              onLeaveBoard={() => { void handleLeaveBoard() }}
+            />
+            {showPresenterBar && <PresenterBar stream={localScreenStream} onStop={() => { void stopSharing() }} />}
+          </div>
+          {showShareViewer && (
+            <ScreenShareViewer
+              stream={remoteScreenStream}
               username={screenSharer?.username}
-              isLocal={isLocalSharing}
-              connecting={!isLocalSharing && isViewing && !remoteScreenStream}
-              onClose={isLocalSharing ? stopSharing : undefined}
+              connecting={isViewing && !remoteScreenStream}
+              layout={shareLayout}
+              onLayoutChange={setShareLayout}
             />
           )}
         </div>
@@ -399,16 +430,6 @@ export default function BoardPage() {
         </AnimatePresence>
       </div>
 
-      <MediaControlBar
-        audioEnabled={audioEnabled}
-        videoEnabled={videoEnabled}
-        toggleAudio={toggleAudio}
-        toggleVideo={toggleVideo}
-        isLocalSharing={isLocalSharing}
-        onToggleShare={toggleShare}
-        onLeaveBoard={() => { void handleLeaveBoard() }}
-      />
-      <ParticipantVideos />
       {presentationOpen && <PresentationMode onClose={() => setPresentationOpen(false)} />}
     </div>
   )

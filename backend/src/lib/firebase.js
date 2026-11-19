@@ -31,10 +31,9 @@ function ensureFirebaseApp() {
 }
 
 export async function verifyIdToken(token) {
-  const auth = ensureFirebaseApp()
-  if (!auth || !token) return null
-
   try {
+    const auth = ensureFirebaseApp()
+    if (!auth || !token) return null
     return await auth.verifyIdToken(token)
   } catch {
     return null

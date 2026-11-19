@@ -104,7 +104,7 @@ export default function CanvasPreviewPage() {
           style={{
             marginLeft: 8, fontSize: 11, fontWeight: 600,
             padding: '3px 8px', borderRadius: 999,
-            background: 'rgba(99,102,241,0.12)', color: 'var(--color-accent)',
+            background: 'var(--color-accent-soft)', color: 'var(--color-accent)',
           }}
         >
           Offline mode

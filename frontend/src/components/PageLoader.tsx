@@ -18,11 +18,11 @@ export default function PageLoader({ label = 'Loading…' }: { label?: string })
           height: 36,
           borderRadius: '50%',
           border: '3px solid #E2E8F0',
-          borderTopColor: '#6366F1',
-          animation: 'aerix-spin 0.8s linear infinite',
+          borderTopColor: 'var(--color-ink)',
+          animation: 'zephros-spin 0.8s linear infinite',
         }}
       />
-      <style>{'@keyframes aerix-spin { to { transform: rotate(360deg) } }'}</style>
+      <style>{'@keyframes zephros-spin { to { transform: rotate(360deg) } }'}</style>
       <p style={{ fontSize: 14, fontWeight: 500 }}>{label}</p>
     </div>
   )

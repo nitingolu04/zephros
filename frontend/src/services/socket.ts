@@ -1,6 +1,8 @@
+import { diffElements, type Patch } from '@/lib/canvasHistory.js'
+import { sessionId, sessionToken } from '@/lib/session'
 import { io, type Socket } from 'socket.io-client'
 import { SocketEvent } from '@/types'
-import type { CanvasElement, CursorPosition, ActivityEvent, UserSession, ChatMention } from '@/types'
+import type { CanvasElement, CursorPosition, ActivityEvent, UserSession, ChatMention, ChatMessage, BoardRole } from '@/types'
 import { useBoardStore } from '@/stores/boardStore'
 import { generateUsername, generateColor, generateId } from '@/lib/utils'
 import { playNotificationSound, unlockNotificationAudio } from '@/lib/notificationSound'
@@ -14,7 +16,7 @@ function dedupeUsers(users: UserSession[]): UserSession[] {
     const name = user.username.toLowerCase().trim()
     const isDupe = kept.some((k) => {
       if (user.userId && k.userId && user.userId === k.userId) return true
-      if (name && k.username.toLowerCase().trim() === name) return true
+      if (user.sessionId === k.sessionId) return true
       return false
     })
     if (!isDupe) kept.push(user)
@@ -22,32 +24,27 @@ function dedupeUsers(users: UserSession[]): UserSession[] {
   return kept
 }
 
-const SESSION_STORAGE_KEY = 'aerix_session_id'
+type Patches = Patch<CanvasElement>[]
 
-function getOrCreateSessionId(): string {
-  try {
-    const stored = sessionStorage.getItem(SESSION_STORAGE_KEY)
-    if (stored) return stored
-    const id = generateId()
-    sessionStorage.setItem(SESSION_STORAGE_KEY, id)
-    return id
-  } catch {
-    return generateId()
-  }
+/**
+ * The server only applies a patch when its `before` matches the stored element exactly.
+ * MongoDB stores `points: []` on every element, while shapes drawn locally have no
+ * `points`, so without this undo/restore of a fresh shape was silently ignored.
+ */
+function toServerPatches(patches: Patches): Patches {
+  const normalize = (el: CanvasElement | null) => (el ? { ...el, points: el.points ?? [] } : null)
+  return patches.map(p => ({ id: p.id, before: normalize(p.before), after: p.after }))
 }
 
 function waitForSocketConnect(socket: Socket, timeoutMs = 8000): Promise<void> {
   if (socket.connected) return Promise.resolve()
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('Socket connection timeout')), timeoutMs)
-    socket.once('connect', () => {
-      clearTimeout(timer)
-      resolve()
-    })
-    socket.once('connect_error', (err) => {
-      clearTimeout(timer)
-      reject(err)
-    })
+    const cleanup = () => { clearTimeout(timer); socket.off('connect', connected); socket.off('connect_error', failed) }
+    const connected = () => { cleanup(); resolve() }
+    const failed = (error: Error) => { cleanup(); reject(error) }
+    const timer = setTimeout(() => failed(new Error('Socket connection timeout')), timeoutMs)
+    socket.once('connect', connected)
+    socket.once('connect_error', failed)
   })
 }
 
@@ -57,7 +54,9 @@ class SocketService {
   private connectPromise: Promise<void> | null = null
   private boundSocket: Socket | null = null
   private activeBoardId: string | null = null
-  private _sessionId: string = getOrCreateSessionId()
+  private _sessionId: string = sessionId
+  private joinedBoardId: string | null = null
+  private joiningBoardId: string | null = null
   private _username: string = generateUsername()
   private _color: string = generateColor()
 
@@ -112,7 +111,7 @@ class SocketService {
       reconnection: true,
       reconnectionAttempts: 15,
       reconnectionDelay: 1000,
-      auth: token ? { token } : undefined,
+      auth: (callback) => { void this.getAuthToken().then(token => callback(token ? { token } : {})) },
     })
 
     this.bindSocketListeners(this.socket)
@@ -124,24 +123,35 @@ class SocketService {
     this.boundSocket = socket
 
     socket.on('connect', () => {
-      console.log('[Aerix] Connected to server')
+      console.log('[Zephros] Connected to server')
       if (this.activeBoardId) {
         this.emitJoin(this.activeBoardId)
       }
     })
 
     socket.on('disconnect', () => {
-      console.log('[Aerix] Disconnected from server')
+      console.log('[Zephros] Disconnected from server')
+      this.joinedBoardId = null
+      this.joiningBoardId = null
       this.stopHeartbeat()
     })
 
     socket.on('connect_error', (err) => {
-      console.warn('[Aerix] Connection error:', err.message)
+      console.warn('[Zephros] Connection error:', err.message)
     })
 
-    socket.on(SocketEvent.BOARD_STATE, (data: { elements: CanvasElement[]; users: UserSession[] }) => {
+    socket.on(SocketEvent.BOARD_STATE, (data: { elements: CanvasElement[]; users: UserSession[]; boardId: string; chat?: ChatMessage[]; role?: BoardRole; linkAccess?: 'edit' | 'view' }) => {
+      if (data.boardId !== this.activeBoardId) return
+      this.joinedBoardId = data.boardId
+      this.joiningBoardId = null
+      this.startHeartbeat(data.boardId)
       const users = dedupeUsers(data.users)
       useBoardStore.getState().setElements(data.elements)
+      useBoardStore.getState().setMyRole(data.role || 'editor')
+      const joined = useBoardStore.getState().board
+      if (joined && data.linkAccess) useBoardStore.getState().setBoard({ ...joined, linkAccess: data.linkAccess })
+      // Backends that store chat send its history; older ones don't, and the device cache is kept.
+      if (Array.isArray(data.chat)) useBoardStore.getState().setChatMessages(data.chat)
       useBoardStore.getState().setActiveUsers(users)
       useBoardStore.getState().setMetrics({ activeUsers: users.length, totalElements: data.elements.length })
     })
@@ -156,7 +166,8 @@ class SocketService {
     })
 
     socket.on(SocketEvent.UPDATE_ELEMENT, (data: { elementId: string; changes: Partial<CanvasElement> }) => {
-      useBoardStore.getState().updateElement(data.elementId, data.changes)
+      const store = useBoardStore.getState()
+      store.setElements(store.elements.map(el => el.id === data.elementId ? { ...el, ...data.changes } : el))
     })
 
     socket.on(SocketEvent.DELETE_ELEMENT, (data: { elementId: string }) => {
@@ -218,7 +229,25 @@ class SocketService {
     })
 
     socket.on(SocketEvent.BOARD_DELETED, () => {
-      window.location.href = '/'
+      void import('sonner').then(({ toast }) => toast.error('This board was deleted by its owner'))
+      setTimeout(() => { window.location.href = '/' }, 1500)
+    })
+
+    // The host gave me edit access or made me a viewer (or changed the board link setting).
+    socket.on('ROLE_UPDATED', (data: { role: BoardRole; by?: string }) => {
+      const before = useBoardStore.getState().myRole
+      useBoardStore.getState().setMyRole(data.role)
+      if (before === data.role) return
+      void import('sonner').then(({ toast }) => {
+        if (data.role === 'viewer') toast.info('You can now only view this board', { description: 'The host turned off editing for you. You can still chat and join the call.' })
+        else toast.success('You can now edit this board')
+      })
+    })
+
+    // Title / saved / lock changes made in another tab or by the owner.
+    socket.on(SocketEvent.BOARD_UPDATED, (changes: Partial<{ title: string; persistent: boolean; requireAuth: boolean; isLocked: boolean; hasPassword: boolean; linkAccess: 'edit' | 'view' }>) => {
+      const { board, setBoard } = useBoardStore.getState()
+      if (board) setBoard({ ...board, ...changes })
     })
 
     socket.on('CHAT_MESSAGE', (msg: {
@@ -231,14 +260,24 @@ class SocketService {
       }
     })
 
-    socket.on(SocketEvent.CHAT_REACTION, (data: { messageId: string; emoji: string; sessionId: string }) => {
+    socket.on(SocketEvent.CHAT_REACTION, (data: { messageId: string; emoji: string; sessionId: string; reactions?: { emoji: string; sessionIds: string[] }[] }) => {
       const store = useBoardStore.getState()
-      const msg = store.chatMessages.find((m) => m.id === data.messageId)
-      const has = msg?.reactions?.find((r) => r.emoji === data.emoji)?.sessionIds.includes(data.sessionId)
-      store.updateChatReaction(data.messageId, data.emoji, data.sessionId, !has)
+      if (Array.isArray(data.reactions)) {
+        // The server's list is authoritative, so the sender's optimistic toggle can't be applied twice.
+        store.setChatReactions(data.messageId, data.reactions)
+      } else {
+        const msg = store.chatMessages.find((m) => m.id === data.messageId)
+        const has = msg?.reactions?.find((r) => r.emoji === data.emoji)?.sessionIds.includes(data.sessionId)
+        store.updateChatReaction(data.messageId, data.emoji, data.sessionId, !has)
+      }
       if (data.sessionId !== this._sessionId) {
         playNotificationSound('chat')
       }
+    })
+
+    socket.on('CHAT_CLEARED', (data: { by?: string }) => {
+      useBoardStore.getState().clearChat()
+      void import('sonner').then(({ toast }) => toast.info(`${data.by || 'Someone'} cleared the chat`, { id: 'chat-cleared' }))
     })
 
     socket.on(SocketEvent.LASER_POINTER, (data: { sessionId: string; username: string; color: string; x: number; y: number }) => {
@@ -310,7 +349,14 @@ class SocketService {
       window.location.href = '/'
     })
 
+    socket.on('OPERATION_ERROR', (data: { message: string }) => {
+      void import('sonner').then(({ toast }) => toast.error(data.message || 'Change could not be saved'))
+      if (this.activeBoardId) { this.joiningBoardId = null; this.emitJoin(this.activeBoardId) }
+    })
     socket.on(SocketEvent.JOIN_ERROR, (data: { message: string }) => {
+      this.joiningBoardId = null
+      this.joinedBoardId = null
+      this.stopHeartbeat()
       void import('sonner').then(({ toast }) => {
         toast.error(data.message || 'Could not join board')
       })
@@ -324,35 +370,41 @@ class SocketService {
   }
 
   private emitJoin(boardId: string) {
-    if (!this.socket?.connected) return
-    const pwd = this.boardPassword || sessionStorage.getItem(`aerix_board_pwd_${boardId}`)
+    if (!this.socket?.connected || this.joiningBoardId === boardId) return
+    this.joiningBoardId = boardId
+    const pwd = this.boardPassword || sessionStorage.getItem(`zephros_board_pwd_${boardId}`)
     this.socket.emit(SocketEvent.JOIN_BOARD, {
       boardId,
       sessionId: this._sessionId,
+      sessionToken,
       username: this._username,
       color: this._color,
       boardPassword: pwd || undefined,
+      editLink: sessionStorage.getItem(`zephros_edit_link_${boardId}`) || undefined,
     })
-    this.startHeartbeat(boardId)
   }
 
   joinBoard(boardId: string, boardPassword?: string): void {
+    if (this.activeBoardId !== boardId) { this.boardPassword = null; this.joinedBoardId = null; this.joiningBoardId = null }
     this.activeBoardId = boardId
     if (boardPassword) {
       this.boardPassword = boardPassword
-      sessionStorage.setItem(`aerix_board_pwd_${boardId}`, boardPassword)
+      sessionStorage.setItem(`zephros_board_pwd_${boardId}`, boardPassword)
     }
     unlockNotificationAudio()
     void this.connect()
-      .then(() => this.emitJoin(boardId))
-      .catch((err) => console.warn('[Aerix] Socket connect deferred:', err))
+      .then(() => { if (this.activeBoardId === boardId && this.joinedBoardId !== boardId) this.emitJoin(boardId) })
+      .catch((err) => console.warn('[Zephros] Socket connect deferred:', err))
   }
 
   leaveBoard(boardId: string) {
     if (this.activeBoardId === boardId) {
       this.activeBoardId = null
+      this.joinedBoardId = null
+      this.joiningBoardId = null
+      this.boardPassword = null
     }
-    this.socket?.emit(SocketEvent.LEAVE_BOARD, { boardId, sessionId: this._sessionId })
+    if (this.socket?.connected) this.socket.emit(SocketEvent.LEAVE_BOARD, { boardId, sessionId: this._sessionId })
     this.stopHeartbeat()
   }
 
@@ -368,23 +420,60 @@ class SocketService {
   }
 
   emitAddElement(boardId: string, element: CanvasElement) {
+    if (boardId === 'preview-local' || !this.canEdit(boardId)) return
     this.socket?.emit(SocketEvent.ADD_ELEMENT, { boardId, element })
   }
 
   emitUpdateElement(boardId: string, elementId: string, changes: Partial<CanvasElement>) {
+    if (boardId === 'preview-local' || !this.canEdit(boardId)) return
     this.socket?.emit(SocketEvent.UPDATE_ELEMENT, { boardId, elementId, changes })
   }
 
   emitDeleteElement(boardId: string, elementId: string) {
+    if (boardId === 'preview-local' || !this.canEdit(boardId)) return
     this.socket?.emit(SocketEvent.DELETE_ELEMENT, { boardId, elementId })
   }
 
   emitClearBoard(boardId: string) {
+    if (boardId === 'preview-local' || !this.canEdit(boardId)) return
     this.socket?.emit(SocketEvent.CLEAR_BOARD, { boardId })
   }
 
-  emitSyncState(boardId: string, elements: CanvasElement[]) {
-    this.socket?.emit('SYNC_STATE', { boardId, elements })
+  applyHistory(direction: 'undo' | 'redo') {
+    const store = useBoardStore.getState()
+    const boardId = store.board?.roomId
+    if (!boardId || !this.canEdit(boardId)) return
+    const before = store.elements
+    store[direction]()
+    const patches = diffElements(before, useBoardStore.getState().elements)
+    if (patches.length && boardId !== 'preview-local') this.socket?.emit('SYNC_STATE', { boardId, patches: toServerPatches(patches) })
+  }
+
+  /**
+   * Send arbitrary element patches (used by version restore) through the same
+   * SYNC_STATE event undo/redo already uses. The server caps each message at 500.
+   */
+  emitPatches(boardId: string, patches: Patches) {
+    if (!patches.length || boardId === 'preview-local' || !this.canEdit(boardId)) return
+    const serverPatches = toServerPatches(patches)
+    for (let i = 0; i < serverPatches.length; i += 500) {
+      this.socket?.emit('SYNC_STATE', { boardId, patches: serverPatches.slice(i, i + 500) })
+    }
+  }
+
+  canEdit(boardId: string): boolean {
+    if (boardId === 'preview-local') return true
+    if (useBoardStore.getState().myRole === 'viewer') {
+      void import('sonner').then(({ toast }) => toast.info('You have view-only access. Ask the host for edit access.', { id: 'view-only' }))
+      return false
+    }
+    if (this.socket?.connected && this.joinedBoardId === boardId) return true
+    void import('sonner').then(({ toast }) => toast.info('Waiting for the board connection. Please retry when connected.', { id: 'board-connection' }))
+    return false
+  }
+
+  emitSetRole(boardId: string, targetSessionId: string, role: BoardRole) {
+    this.socket?.emit('SET_ROLE', { boardId, targetSessionId, role })
   }
 
   emitActivityEvent(boardId: string, event: ActivityEvent) {
@@ -401,6 +490,10 @@ class SocketService {
 
   emitChatMessage(boardId: string, message: string, mentions?: ChatMention[]) {
     this.socket?.emit('CHAT_MESSAGE', { boardId, message, mentions: mentions || [] })
+  }
+
+  emitClearChat(boardId: string) {
+    this.socket?.emit('CHAT_CLEAR', { boardId })
   }
 
   emitChatReaction(boardId: string, messageId: string, emoji: string) {
@@ -462,6 +555,8 @@ class SocketService {
   disconnect() {
     this.stopHeartbeat()
     this.activeBoardId = null
+    this.joinedBoardId = null
+    this.joiningBoardId = null
     this.socket?.removeAllListeners()
     this.socket?.disconnect()
     this.socket = null

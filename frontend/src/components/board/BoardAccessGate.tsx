@@ -34,7 +34,7 @@ export default function BoardAccessGate({ boardId, reason, boardTitle, onUnlocke
     const res = await api.verifyBoardAccess(boardId, password.trim())
     setLoading(false)
     if (res.success) {
-      sessionStorage.setItem(`aerix_board_pwd_${boardId}`, password.trim())
+      sessionStorage.setItem(`zephros_board_pwd_${boardId}`, password.trim())
       onUnlocked(password.trim())
     } else {
       toast.error('Incorrect password')
@@ -64,7 +64,7 @@ export default function BoardAccessGate({ boardId, reason, boardTitle, onUnlocke
       <div style={shell}>
         <div style={{
           width: 56, height: 56, borderRadius: 16, display: 'flex', alignItems: 'center',
-          justifyContent: 'center', background: 'rgba(99,102,241,0.15)', color: '#6366F1',
+          justifyContent: 'center', background: 'var(--color-accent-soft)', color: 'var(--color-accent)',
         }}
         >
           <LogIn style={{ width: 28, height: 28 }} />
@@ -92,7 +92,7 @@ export default function BoardAccessGate({ boardId, reason, boardTitle, onUnlocke
           }}
           style={{
             borderRadius: 12, border: 'none', padding: '10px 20px',
-            background: '#6366F1', color: 'white', fontWeight: 600, cursor: 'pointer',
+            background: 'var(--color-ink)', color: 'var(--color-ink-foreground)', fontWeight: 600, cursor: 'pointer',
           }}
         >
           Sign in with Google
@@ -105,7 +105,7 @@ export default function BoardAccessGate({ boardId, reason, boardTitle, onUnlocke
     <div style={shell}>
       <div style={{
         width: 56, height: 56, borderRadius: 16, display: 'flex', alignItems: 'center',
-        justifyContent: 'center', background: 'rgba(99,102,241,0.15)', color: '#6366F1',
+        justifyContent: 'center', background: 'var(--color-accent-soft)', color: 'var(--color-accent)',
       }}
       >
         <Lock style={{ width: 28, height: 28 }} />
@@ -129,7 +129,7 @@ export default function BoardAccessGate({ boardId, reason, boardTitle, onUnlocke
         onClick={() => { void handlePassword() }}
         style={{
           borderRadius: 12, border: 'none', padding: '10px 20px',
-          background: '#6366F1', color: 'white', fontWeight: 600,
+          background: 'var(--color-ink)', color: 'var(--color-ink-foreground)', fontWeight: 600,
           cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1,
         }}
       >

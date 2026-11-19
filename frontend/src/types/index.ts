@@ -18,6 +18,9 @@ export interface Board {
 
   hasPassword?: boolean
 
+  /** What the plain board link allows; the owner can switch it to view-only. */
+  linkAccess?: 'edit' | 'view'
+
   lastEditedBy?: { uid: string | null; displayName: string | null } | null
 
   createdAt: string
@@ -220,6 +223,8 @@ export interface UserSession {
 
   isMuted?: boolean
 
+  role?: BoardRole
+
 }
 
 
@@ -261,6 +266,8 @@ export interface ActivityEvent {
 
 
 /* ── Tool Types ── */
+
+export type BoardRole = 'editor' | 'viewer'
 
 export type ToolType = 'select' | 'hand' | 'pen' | 'rectangle' | 'circle' | 'line' | 'arrow' | 'text' | 'sticky' | 'eraser' | 'laser' | 'reaction' | 'frame'
 
@@ -321,6 +328,8 @@ export const SocketEvent = {
   BOARD_STATE: 'BOARD_STATE',
 
   BOARD_DELETED: 'BOARD_DELETED',
+
+  BOARD_UPDATED: 'BOARD_UPDATED',
 
   CURSORS_UPDATE: 'CURSORS_UPDATE',
 

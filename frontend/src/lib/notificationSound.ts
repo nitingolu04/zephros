@@ -1,4 +1,4 @@
-const STORAGE_KEY = 'aerix_notification_sounds'
+const STORAGE_KEY = 'zephros_notification_sounds'
 
 export type NotificationSoundType = 'join' | 'leave' | 'screenShare' | 'screenShareStop' | 'chat'
 

@@ -27,10 +27,11 @@ function applyTheme(resolved: 'light' | 'dark') {
 }
 
 const stored = (typeof localStorage !== 'undefined'
-  ? localStorage.getItem('Aerix-theme')
+  ? localStorage.getItem('Zephros-theme')
   : null) as ThemeMode | null
 
-const initialMode: ThemeMode = stored || 'dark'
+// Light "paper" theme is the default; users can still switch to dark.
+const initialMode: ThemeMode = stored || 'light'
 const initialResolved = resolveTheme(initialMode)
 
 // Apply on load
@@ -43,7 +44,7 @@ export const useThemeStore = create<ThemeState>((set) => ({
   resolved: initialResolved,
   setMode: (mode) => {
     const resolved = resolveTheme(mode)
-    localStorage.setItem('Aerix-theme', mode)
+    localStorage.setItem('Zephros-theme', mode)
     applyTheme(resolved)
     set({ mode, resolved })
   },

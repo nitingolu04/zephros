@@ -1,23 +1,28 @@
-# Render Blueprint — Aerix backend
-# Deploy: Render Dashboard → New → Blueprint → connect this repo
-# Set secret env vars (MONGO_URI, Firebase keys, CLIENT_URL) in the dashboard after deploy.
+# Render Blueprint — Zephros (frontend + backend)
+# Deploy: Render Dashboard → New → Blueprint → connect this repo.
+# Render asks for every `sync: false` value during setup; see Deployment.md for what goes where.
+# The database is MongoDB Atlas (free M0 cluster); Render has no free MongoDB.
 
 services:
+  # ── Backend: Express + Socket.IO (a long-running server, so a Web Service) ──
   - type: web
-    name: aerix-backend
+    name: zephros-backend
     runtime: node
     rootDir: backend
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: node src/index.js
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
-        value: "20"
+        value: "22"
+      - key: NODE_ENV
+        value: production
       - key: PORT
         value: "10000"
       - key: MONGO_URI
         sync: false
+      # The frontend's address, e.g. https://zephros-frontend.onrender.com (no trailing slash)
       - key: CLIENT_URL
         sync: false
       - key: FIREBASE_PROJECT_ID
@@ -25,4 +30,43 @@ services:
       - key: FIREBASE_CLIENT_EMAIL
         sync: false
       - key: FIREBASE_PRIVATE_KEY
+        sync: false
+
+  # ── Frontend: the built React app, served from Render's CDN (free, never sleeps) ──
+  - type: web
+    name: zephros-frontend
+    runtime: static
+    # Paths are spelled out from the repo root, which is how Render resolves staticPublishPath.
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: frontend/dist
+    # Single-page app: send page routes like /board/abc to index.html (real files are served as-is).
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      # Vite gives built assets unique hashed names, so browsers can cache them for a year.
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # Makes the build stop with a clear message if VITE_API_URL is missing.
+      - key: REQUIRE_API_URL
+        value: "true"
+      # The backend's address, e.g. https://zephros-backend.onrender.com (no trailing slash)
+      - key: VITE_API_URL
+        sync: false
+      - key: VITE_FIREBASE_API_KEY
+        sync: false
+      - key: VITE_FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: VITE_FIREBASE_PROJECT_ID
+        sync: false
+      - key: VITE_FIREBASE_STORAGE_BUCKET
+        sync: false
+      - key: VITE_FIREBASE_MESSAGING_SENDER_ID
+        sync: false
+      - key: VITE_FIREBASE_APP_ID
         sync: false

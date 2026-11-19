@@ -1,10 +1,14 @@
 {
-  "name": "aerix",
+  "name": "zephros",
   "private": true,
   "scripts": {
     "dev": "npm run dev --prefix frontend",
     "build": "npm run build --prefix frontend",
     "start": "npm start --prefix backend",
-    "install:all": "npm install --prefix frontend && npm install --prefix backend"
-  }
+    "install:all": "npm install --prefix frontend && npm install --prefix backend",
+    "dev:local": "npm run dev:local --prefix backend",
+    "dev:lan": "npm run dev:lan --prefix backend",
+    "test": "npm test --prefix backend"
+  },
+  "type": "module"
 }

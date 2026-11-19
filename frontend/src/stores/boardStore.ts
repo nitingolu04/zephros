@@ -1,3 +1,4 @@
+import { applyPatches, diffElements, type Patch } from '@/lib/canvasHistory.js'
 import { create } from 'zustand'
 import type {
   Board,
@@ -14,12 +15,50 @@ import type {
   CanvasReaction,
   ScreenSharer,
   ChatMention,
+  BoardRole,
 } from '@/types'
 import { generateId } from '@/lib/utils'
+
+/* ── Device-local preferences and chat history (frontend only, no backend involvement) ── */
+const SMART_SHAPES_KEY = 'zephros-smart-shapes'
+const CHAT_KEY = (boardId: string) => `zephros-chat:${boardId}`
+const CHAT_LIMIT = 200
+
+function readLocal<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw === null ? fallback : JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
+
+function writeLocal(key: string, value: unknown) {
+  try { localStorage.setItem(key, JSON.stringify(value)) } catch { /* storage full or blocked: ignore */ }
+}
+
+function loadChat(boardId: string | undefined): ChatMessage[] {
+  if (!boardId) return []
+  const saved = readLocal<ChatMessage[]>(CHAT_KEY(boardId), [])
+  return Array.isArray(saved) ? saved.slice(-CHAT_LIMIT) : []
+}
+
+function saveChat(boardId: string | undefined, messages: ChatMessage[]) {
+  if (boardId && boardId !== 'preview-local') writeLocal(CHAT_KEY(boardId), messages.slice(-CHAT_LIMIT))
+}
+
+export function clearSavedChat(boardId: string) {
+  try { localStorage.removeItem(CHAT_KEY(boardId)) } catch { /* ignore */ }
+}
+
+/** Tools a viewer may use: they only move around, point and react, never change the board. */
+export const VIEWER_TOOLS: ToolType[] = ['hand', 'laser', 'reaction']
 
 interface BoardState {
   /* Board */
   board: Board | null
+  /** My permission on this board, decided by the server. */
+  myRole: BoardRole
   isLoading: boolean
   error: string | null
 
@@ -65,14 +104,21 @@ interface BoardState {
   drawingUsers: Record<string, string>
 
   /* History */
-  history: CanvasElement[][]
+  history: Patch<CanvasElement>[][]
   historyIndex: number
+
+  /* Frontend-only features */
+  smartShapes: boolean
+  showVersionHistory: boolean
+  /** True once the backend has sent chat history (it stores chat); otherwise chat is cached on this device. */
+  serverChat: boolean
 
   /* Actions */
   setBoard: (board: Board | null) => void
   setLoading: (loading: boolean) => void
   setError: (error: string | null) => void
   setActiveTool: (tool: ToolType) => void
+  setMyRole: (role: BoardRole) => void
   setPenMode: (mode: PenMode) => void
   setLastShapeTool: (shape: ShapeToolType) => void
   setShapeFillEnabled: (enabled: boolean) => void
@@ -120,14 +166,26 @@ interface BoardState {
   setDrawingUser: (sessionId: string, username: string, drawing: boolean) => void
   setUserMuted: (sessionId: string, muted: boolean) => void
 
+  /* Frontend-only features */
+  setSmartShapes: (enabled: boolean) => void
+  setShowVersionHistory: (open: boolean) => void
+  /** Replace the whole canvas (used by version restore); undoable like any edit. */
+  replaceElements: (elements: CanvasElement[]) => void
+  clearChat: () => void
+  /** Replace chat with the server's history (BOARD_STATE). */
+  setChatMessages: (messages: ChatMessage[]) => void
+  /** Apply the server's authoritative reaction list for one message. */
+  setChatReactions: (messageId: string, reactions: { emoji: string; sessionIds: string[] }[]) => void
+
   /* History */
-  pushHistory: () => void
+  pushHistory: (before: CanvasElement[]) => void
   undo: () => void
   redo: () => void
 }
 
 export const useBoardStore = create<BoardState>((set, get) => ({
   board: null,
+  myRole: 'editor',
   isLoading: false,
   error: null,
   elements: [],
@@ -162,11 +220,22 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   drawingUsers: {},
   history: [],
   historyIndex: -1,
+  smartShapes: readLocal(SMART_SHAPES_KEY, true),
+  showVersionHistory: false,
+  serverChat: false,
 
-  setBoard: (board) => set({ board }),
+  setBoard: (board) => {
+    if (board?.roomId !== get().board?.roomId) {
+      set({ board, elements: [], selectedElementIds: [], history: [], historyIndex: -1,
+        activityFeed: [], chatMessages: loadChat(board?.roomId), cursors: [], activeUsers: [], typingUsers: {}, drawingUsers: {},
+        screenSharer: null, remoteScreenStream: null, laserPoints: [], canvasReactions: [],
+        stageScale: 1, stagePosition: { x: 0, y: 0 }, error: null, showVersionHistory: false, serverChat: false, myRole: 'editor' })
+    } else set({ board })
+  },
   setLoading: (isLoading) => set({ isLoading }),
   setError: (error) => set({ error }),
   setActiveTool: (activeTool) => {
+    if (get().myRole === 'viewer' && !VIEWER_TOOLS.includes(activeTool)) return
     const shapes: ShapeToolType[] = ['rectangle', 'circle', 'line', 'arrow']
     if (shapes.includes(activeTool as ShapeToolType)) {
       set({ activeTool, lastShapeTool: activeTool as ShapeToolType })
@@ -174,8 +243,12 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       set({ activeTool })
     }
   },
-  setPenMode: (penMode) => set({ penMode, activeTool: 'pen' }),
-  setLastShapeTool: (lastShapeTool) => set({ lastShapeTool, activeTool: lastShapeTool }),
+  setMyRole: (myRole) => {
+    if (myRole === 'viewer' && !VIEWER_TOOLS.includes(get().activeTool)) set({ myRole, activeTool: 'hand', selectedElementIds: [] })
+    else set({ myRole })
+  },
+  setPenMode: (penMode) => set(get().myRole === 'viewer' ? { penMode } : { penMode, activeTool: 'pen' }),
+  setLastShapeTool: (lastShapeTool) => set(get().myRole === 'viewer' ? { lastShapeTool } : { lastShapeTool, activeTool: lastShapeTool }),
   setShapeFillEnabled: (shapeFillEnabled) => set({ shapeFillEnabled }),
   setToolColor: (toolColor) => set({ toolColor }),
   setToolStrokeWidth: (toolStrokeWidth) => set({ toolStrokeWidth }),
@@ -229,33 +302,38 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   setElements: (elements) => set({ elements }),
 
   addElement: (element) => {
+    const before = get().elements
     set((state) => ({ elements: [...state.elements, element] }))
-    get().pushHistory()
+    get().pushHistory(before)
   },
 
   updateElement: (id, changes) => {
+    const before = get().elements
     set((state) => ({
       elements: state.elements.map((el) =>
         el.id === id ? { ...el, ...changes, updatedAt: new Date().toISOString() } : el
       ),
     }))
+    get().pushHistory(before)
   },
 
   deleteElement: (id) => {
+    const before = get().elements
     set((state) => ({
       elements: state.elements.filter((el) => el.id !== id),
       selectedElementIds: state.selectedElementIds.filter((sid) => sid !== id),
     }))
-    get().pushHistory()
+    get().pushHistory(before)
   },
 
   deleteSelectedElements: () => {
+    const before = get().elements
     const { selectedElementIds } = get()
     set((state) => ({
       elements: state.elements.filter((el) => !selectedElementIds.includes(el.id)),
       selectedElementIds: [],
     }))
-    get().pushHistory()
+    get().pushHistory(before)
   },
 
   selectElement: (id, multi = false) => {
@@ -276,6 +354,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   selectAll: () => set((state) => ({ selectedElementIds: state.elements.map((el) => el.id) })),
 
   duplicateSelected: () => {
+    const before = get().elements
     const { selectedElementIds, elements } = get()
     const newElements = elements
       .filter((el) => selectedElementIds.includes(el.id))
@@ -291,12 +370,13 @@ export const useBoardStore = create<BoardState>((set, get) => ({
       elements: [...state.elements, ...newElements],
       selectedElementIds: newElements.map((el) => el.id),
     }))
-    get().pushHistory()
+    get().pushHistory(before)
   },
 
   clearBoard: () => {
+    const before = get().elements
     set({ elements: [], selectedElementIds: [] })
-    get().pushHistory()
+    get().pushHistory(before)
   },
 
   setCursors: (cursors) => set({ cursors }),
@@ -309,9 +389,11 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   addChatMessage: (msg) => {
+    if (get().chatMessages.some((m) => m.id === msg.id)) return
     set((state) => ({
-      chatMessages: [...state.chatMessages, msg].slice(-100),
+      chatMessages: [...state.chatMessages, msg].slice(-CHAT_LIMIT),
     }))
+    saveChat(get().board?.roomId, get().chatMessages)
   },
 
   updateChatReaction: (messageId, emoji, sessionId, add) => {
@@ -332,6 +414,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         return { ...msg, reactions }
       }),
     }))
+    saveChat(get().board?.roomId, get().chatMessages)
   },
 
   addLaserPoint: (point) => {
@@ -389,26 +472,47 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     ),
   })),
 
-  pushHistory: () => {
-    const { elements, history, historyIndex } = get()
-    const newHistory = history.slice(0, historyIndex + 1)
-    newHistory.push([...elements])
-    set({ history: newHistory.slice(-50), historyIndex: newHistory.length - 1 })
+  setSmartShapes: (smartShapes) => {
+    writeLocal(SMART_SHAPES_KEY, smartShapes)
+    set({ smartShapes })
+  },
+  setShowVersionHistory: (showVersionHistory) => set({ showVersionHistory }),
+  replaceElements: (elements) => {
+    const before = get().elements
+    set({ elements, selectedElementIds: [] })
+    get().pushHistory(before)
+  },
+  setChatMessages: (chatMessages) => {
+    set({ chatMessages: chatMessages.slice(-CHAT_LIMIT), serverChat: true })
+    saveChat(get().board?.roomId, get().chatMessages)
+  },
+  setChatReactions: (messageId, reactions) => {
+    set((state) => ({ chatMessages: state.chatMessages.map((m) => (m.id === messageId ? { ...m, reactions } : m)) }))
+    saveChat(get().board?.roomId, get().chatMessages)
+  },
+  clearChat: () => {
+    const boardId = get().board?.roomId
+    if (boardId) clearSavedChat(boardId)
+    set({ chatMessages: [] })
+  },
+
+  pushHistory: (before) => {
+    const patches = diffElements(before, get().elements)
+    if (!patches.length) return
+    const history = [...get().history.slice(0, get().historyIndex + 1), patches].slice(-50)
+    set({ history, historyIndex: history.length - 1 })
   },
 
   undo: () => {
-    const { history, historyIndex } = get()
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1
-      set({ elements: [...history[newIndex]], historyIndex: newIndex })
-    }
+    const { history, historyIndex, elements } = get()
+    if (historyIndex < 0) return
+    const inverse = history[historyIndex].map(p => ({ id: p.id, before: p.after, after: p.before }))
+    set({ elements: applyPatches(elements, inverse), historyIndex: historyIndex - 1, selectedElementIds: [] })
   },
 
   redo: () => {
-    const { history, historyIndex } = get()
-    if (historyIndex < history.length - 1) {
-      const newIndex = historyIndex + 1
-      set({ elements: [...history[newIndex]], historyIndex: newIndex })
-    }
+    const { history, historyIndex, elements } = get()
+    if (historyIndex >= history.length - 1) return
+    set({ elements: applyPatches(elements, history[historyIndex + 1]), historyIndex: historyIndex + 1, selectedElementIds: [] })
   },
 }))

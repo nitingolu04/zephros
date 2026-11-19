@@ -1,51 +1,43 @@
-import { Board, Element, Session } from '../models/index.js'
+import { Board, BoardVersion, ChatMessage, Element, Session, UserBoard, Attendance } from '../models/index.js'
+import { inRoom } from '../lib/roomQueue.js'
+import { autoSnapshotActiveBoards } from '../lib/versions.js'
 
-/**
- * Cleanup worker that runs every 60 seconds.
- * Deletes boards/elements/sessions where no heartbeat received for 2 minutes.
- */
+/** Everything that belongs to a board. Used by the cleanup job and the owner's delete route. */
+export async function deleteBoardData(roomId) {
+  await Promise.all([
+    Element.deleteMany({ boardId: roomId }),
+    Session.deleteMany({ boardId: roomId }),
+    UserBoard.deleteMany({ boardId: roomId }),
+    ChatMessage.deleteMany({ boardId: roomId }),
+    BoardVersion.deleteMany({ boardId: roomId }),
+    Attendance.deleteMany({ boardId: roomId }),
+  ])
+}
+
+export async function cleanupExpiredBoards() {
+  const cutoff = new Date(Date.now() - 120000)
+  await Session.deleteMany({ lastHeartbeat: { $lt: cutoff } })
+  const candidates = await Board.find({ persistent: false, updatedAt: { $lt: cutoff } }).lean()
+  for (const board of candidates) {
+    await inRoom(board.roomId, async () => {
+      if (await Session.exists({ boardId: board.roomId, lastHeartbeat: { $gte: cutoff } })) return
+      const removed = await Board.deleteOne({ _id: board._id, persistent: false, updatedAt: { $lt: cutoff } })
+      if (!removed.deletedCount) return
+      await deleteBoardData(board.roomId)
+    })
+  }
+}
+
 export function startCleanupWorker() {
-  console.log('[Cleanup] Worker started — interval: 60s, stale threshold: 2min')
-
-  setInterval(async () => {
-    try {
-      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000)
-
-      // Find stale sessions (no heartbeat in 2 minutes)
-      const staleSessions = await Session.find({
-        lastHeartbeat: { $lt: twoMinutesAgo },
-      }).lean()
-
-      if (staleSessions.length === 0) return
-
-      // Group by boardId
-      const boardIds = [...new Set(staleSessions.map((s) => s.boardId))]
-
-      for (const boardId of boardIds) {
-        // Delete stale sessions for this board
-        await Session.deleteMany({
-          boardId,
-          lastHeartbeat: { $lt: twoMinutesAgo },
-        })
-
-        // Check if any active sessions remain
-        const activeCount = await Session.countDocuments({ boardId })
-
-        if (activeCount === 0) {
-          const board = await Board.findOne({ roomId: boardId }).lean()
-          if (!board?.persistent) {
-            console.log(`[Cleanup] Deleting stale board: ${boardId}`)
-            await Board.deleteOne({ roomId: boardId })
-            await Element.deleteMany({ boardId })
-            await Session.deleteMany({ boardId })
-          } else {
-            console.log(`[Cleanup] Stale sessions cleared; saved board kept: ${boardId}`)
-            await Session.deleteMany({ boardId })
-          }
-        }
-      }
-    } catch (err) {
-      console.error('[Cleanup] Error:', err)
-    }
-  }, 60 * 1000) // Run every 60 seconds
+  // Grace period protects temporary boards during reloads and network interruptions.
+  const cleanup = setInterval(() => {
+    cleanupExpiredBoards().catch(err => console.error('[Cleanup]', err.message))
+  }, 60000)
+  // Auto version history: snapshot boards being edited, at most every 2 minutes, only on change.
+  const snapshots = setInterval(() => {
+    autoSnapshotActiveBoards().catch(err => console.error('[AutoSnapshot]', err.message))
+  }, 120000)
+  cleanup.unref()
+  snapshots.unref()
+  return { stop: () => { clearInterval(cleanup); clearInterval(snapshots) } }
 }

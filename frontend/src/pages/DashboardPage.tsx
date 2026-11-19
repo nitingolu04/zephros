@@ -2,8 +2,8 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
-  Search, Copy, Sparkles, Clock, ArrowLeft,
-  PenLine, Circle, CopyPlus, Trash2, ExternalLink,
+  Search, Copy, Clock, ArrowLeft, Plus, LayoutGrid,
+  Circle, CopyPlus, Trash2, ExternalLink,
 } from 'lucide-react'
 import Navbar from '@/components/layout/Navbar'
 import { api } from '@/services/api'
@@ -13,35 +13,23 @@ import type { BoardHistoryItem } from '@/types'
 
 type FilterTab = 'all' | 'saved' | 'ephemeral'
 
-const THUMB_COLORS = [
-  ['#6366F1', '#8B5CF6'],
-  ['#3B82F6', '#06B6D4'],
-  ['#8B5CF6', '#EC4899'],
-  ['#F59E0B', '#F97316'],
-  ['#10B981', '#14B8A6'],
-]
+const NOTE_COLORS = ['var(--color-note-yellow)', 'var(--color-note-mint)', 'var(--color-note-sky)', 'var(--color-note-pink)']
 
+/** Paper-and-sticky-note thumbnail, varied per board so rows are easy to scan. */
 function BoardThumbnail({ index, className = '' }: { index: number; className?: string }) {
-  const [a, b] = THUMB_COLORS[index % THUMB_COLORS.length]
+  const a = NOTE_COLORS[index % NOTE_COLORS.length]
+  const b = NOTE_COLORS[(index + 2) % NOTE_COLORS.length]
   return (
-    <div
-      className={`relative overflow-hidden rounded-lg ${className}`}
-      style={{ background: `linear-gradient(135deg, ${a}18 0%, ${b}12 100%)` }}
-    >
-      <div
-        className="absolute inset-0 opacity-[0.35]"
-        style={{
-          backgroundImage: 'radial-gradient(circle at 1px 1px, var(--color-border) 1px, transparent 0)',
-          backgroundSize: '16px 16px',
-        }}
-      />
-      <PenLine className="absolute left-1/2 top-1/2 h-5 w-5 -translate-x-1/2 -translate-y-1/2 opacity-20" />
+    <div className={`canvas-grid relative overflow-hidden rounded-lg border border-border ${className}`} style={{ backgroundSize: '10px 10px' }}>
+      <span className="absolute rounded-[3px]" style={{ left: '14%', top: '20%', width: '34%', height: '38%', background: a, transform: 'rotate(-4deg)' }} />
+      <span className="absolute rounded-[3px]" style={{ right: '14%', bottom: '18%', width: '30%', height: '34%', background: b, transform: 'rotate(5deg)' }} />
     </div>
   )
 }
 
 export default function DashboardPage() {
   const navigate = useNavigate()
+  const [creating, setCreating] = useState(false)
   const [recentBoards, setRecentBoards] = useState<BoardHistoryItem[]>([])
   const [searchQuery, setSearchQuery] = useState('')
   const [filterTab, setFilterTab] = useState<FilterTab>('all')
@@ -122,6 +110,19 @@ export default function DashboardPage() {
   const savedCount = useMemo(() => recentBoards.filter((b) => b.persistent && b.exists).length, [recentBoards])
   const liveCount = useMemo(() => recentBoards.filter((b) => b.activeSessions > 0).length, [recentBoards])
 
+  const createBoard = async () => {
+    if (creating) return
+    setCreating(true)
+    const res = await api.createBoard('Untitled Board', true)
+    setCreating(false)
+    if (res.success && res.data) {
+      api.recordBoardVisit(res.data.boardId, 'Untitled Board').catch(() => {})
+      navigate(`/board/${res.data.boardId}`)
+    } else {
+      toast.error(res.error || 'Could not create board')
+    }
+  }
+
   const openBoard = (board: BoardHistoryItem) => {
     if (!board.exists && !board.persistent) {
       toast.error('This board has expired')
@@ -131,7 +132,7 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[#f4f6fa] dark:bg-background">
+    <div className="min-h-screen bg-background">
       <Navbar />
 
       <div className="mx-auto max-w-5xl px-4 pb-24 pt-[5.5rem] sm:px-6 sm:pt-24">
@@ -148,36 +149,41 @@ export default function DashboardPage() {
           <div className="border-b border-border px-6 py-8 sm:px-8 sm:py-10">
             <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
               <div className="min-w-0">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-accent">Workspace</p>
-                <h1 className="text-3xl font-bold tracking-tight text-foreground sm:text-[2rem] leading-snug">
-                  My Boards
+                <span className="eyebrow mb-3">Workspace</span>
+                <h1 className="text-foreground" style={{ fontSize: 'clamp(32px, 4vw, 44px)', fontWeight: 600, letterSpacing: '-0.035em', lineHeight: 1.05 }}>
+                  My <span className="font-display" style={{ fontStyle: 'italic', fontWeight: 400 }}>boards</span>
                 </h1>
                 <p className="mt-2 max-w-lg text-sm leading-6 text-muted-foreground sm:text-[15px]">
                   Boards you&apos;ve created or joined. Saved boards stay after sessions end.
                 </p>
               </div>
 
-              {!loadingBoards && recentBoards.length > 0 && (
-                <div className="flex gap-4 shrink-0">
-                  <Stat label="Total" value={recentBoards.length} />
-                  <Stat label="Saved" value={savedCount} />
-                  <Stat label="Live now" value={liveCount} accent />
-                </div>
-              )}
+              <div className="flex items-center gap-6 shrink-0">
+                {!loadingBoards && recentBoards.length > 0 && (
+                  <div className="flex gap-6">
+                    <Stat label="Total" value={recentBoards.length} />
+                    <Stat label="Saved" value={savedCount} />
+                    <Stat label="Live now" value={liveCount} accent />
+                  </div>
+                )}
+                <button type="button" onClick={createBoard} disabled={creating} className="btn btn-primary">
+                  {creating ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" /> : <><Plus className="h-4 w-4" /> New board</>}
+                </button>
+              </div>
             </div>
 
             {!loadingBoards && recentBoards.length > 0 && (
               <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="flex gap-1 rounded-lg border border-border bg-surface-1 p-1">
+                <div className="flex gap-1 rounded-full border border-border bg-surface-1 p-1">
                   {(['all', 'saved', 'ephemeral'] as FilterTab[]).map((tab) => (
                     <button
                       key={tab}
                       type="button"
                       onClick={() => setFilterTab(tab)}
-                      className={`rounded-md px-3 py-1.5 text-xs font-medium capitalize transition-colors ${
+                      className={`rounded-full border-none px-3.5 py-1.5 text-xs font-medium capitalize transition-colors cursor-pointer ${
                         filterTab === tab
-                          ? 'bg-accent text-white'
-                          : 'text-muted-foreground hover:text-foreground'
+                          ? 'bg-ink text-ink-foreground'
+                          : 'bg-transparent text-muted-foreground hover:text-foreground'
                       }`}
                     >
                       {tab}
@@ -191,7 +197,7 @@ export default function DashboardPage() {
                     placeholder="Search by title..."
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    className="h-10 w-full rounded-lg border border-border bg-surface-1 pl-9 pr-3 text-sm text-foreground outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/15"
+                    className="h-10 w-full rounded-full border border-border bg-surface-1 pl-9 pr-3 text-sm text-foreground outline-none transition-colors focus:border-border-strong focus:ring-2 focus:ring-accent/15"
                   />
                 </div>
                 <span className="text-xs text-muted-foreground">
@@ -210,15 +216,18 @@ export default function DashboardPage() {
               </div>
             ) : filtered.length === 0 ? (
               <div className="flex flex-col items-center py-16 text-center sm:py-20">
-                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-accent/10">
-                  <Sparkles className="h-6 w-6 text-accent" />
+                <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl bg-muted">
+                  <LayoutGrid className="h-6 w-6 text-muted-foreground" />
                 </div>
                 <h2 className="text-lg font-semibold text-foreground">No boards found</h2>
                 <p className="mt-2 max-w-xs text-sm text-muted-foreground">
                   {searchQuery || filterTab !== 'all'
                     ? 'Try a different search or filter.'
-                    : 'Create or join a board from the homepage.'}
+                    : 'Create your first saved board to see it here.'}
                 </p>
+                {!searchQuery && filterTab === 'all' && (
+                  <button type="button" onClick={createBoard} disabled={creating} className="btn btn-primary btn-sm mt-6"><Plus className="h-4 w-4" /> New board</button>
+                )}
               </div>
             ) : (
               <>
@@ -320,7 +329,7 @@ function BoardRow({
       <div className="flex min-w-0 items-center gap-4">
         <BoardThumbnail index={index} className="h-12 w-[4.5rem] shrink-0" />
         <div className="min-w-0">
-          <p className="truncate font-medium text-foreground group-hover:text-accent transition-colors">
+          <p className="truncate font-medium text-foreground">
             {board.title}
           </p>
           <p className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{board.id}</p>

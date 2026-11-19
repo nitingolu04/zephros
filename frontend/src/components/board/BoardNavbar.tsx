@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { PanelRightClose, PanelRightOpen, Share2, Sparkles, Pencil, Check, X, Bookmark, Circle, Presentation, Lock, UserX, MicOff, ChevronDown } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen, Share2, Pencil, Check, X, Bookmark, Circle, Presentation, Lock, UserX, MicOff, ChevronDown, Eye } from 'lucide-react'
+import SharePopover from '@/components/board/SharePopover'
 import { toast } from 'sonner'
 import ThemeToggle from '@/components/ui/ThemeToggle'
 import { useBoardStore } from '@/stores/boardStore'
@@ -11,6 +12,7 @@ import { useNavigate } from 'react-router-dom'
 import { generateId } from '@/lib/utils'
 import { api } from '@/services/api'
 import { useRecorder } from '@/hooks/useRecorder'
+import { LogoMark } from '@/components/ui/Logo'
 
 interface Props {
   boardTitle: string
@@ -42,6 +44,9 @@ export default function BoardNavbar({
   const hasOtherHost = Boolean(board?.ownerUid && !isOwner)
 
   const securityRef = useRef<HTMLDivElement>(null)
+  const shareRef = useRef<HTMLButtonElement>(null)
+  const [showShare, setShowShare] = useState(false)
+  const myRole = useBoardStore((s) => s.myRole)
 
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleValue, setTitleValue] = useState(boardTitle)
@@ -90,13 +95,23 @@ export default function BoardNavbar({
     setShowSecurity((open) => !open)
   }
 
-  const saveTitle = () => {
+  const saveTitle = async () => {
     const newTitle = titleValue.trim() || 'Untitled Board'
+    const previous = board?.title || 'Untitled Board'
     setTitleValue(newTitle)
     setEditingTitle(false)
+    if (newTitle === previous) return
     if (board) setBoard({ ...board, title: newTitle })
-    fetch(`/api/board/${boardId}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: newTitle }) }).catch(() => {})
-    toast.success('Board renamed')
+    // Goes through the API client so VITE_API_URL, auth and board-password headers apply.
+    const res = await api.updateBoard(boardId, { title: newTitle })
+    if (res.success) {
+      toast.success('Board renamed')
+    } else {
+      setTitleValue(previous)
+      const current = useBoardStore.getState().board
+      if (current) setBoard({ ...current, title: previous })
+      toast.error(res.error || 'Could not rename board')
+    }
   }
 
   const saveUsername = () => {
@@ -122,11 +137,6 @@ export default function BoardNavbar({
       socketService.emitUpdateUsername(boardId, newName)
       toast.success(`Username changed to ${newName}`)
     }
-  }
-
-  const copyLink = () => {
-    navigator.clipboard.writeText(`${window.location.origin}/board/${boardId}`)
-    toast.success('Board link copied!')
   }
 
   const toggleSaveBoard = async () => {
@@ -210,6 +220,8 @@ export default function BoardNavbar({
   const navbarUsers = (() => {
     const kept: typeof activeUsers = []
     for (const user of activeUsers) {
+      // You already appear as the name button on the right; only show the other people here.
+      if (user.sessionId === socketService.sessionId) continue
       const name = user.username.toLowerCase().trim()
       const isDupe = kept.some((k) => {
         if (user.userId && k.userId && user.userId === k.userId) return true
@@ -223,21 +235,17 @@ export default function BoardNavbar({
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-      height: 52, flexShrink: 0, position: 'relative', zIndex: 50,
+      display: 'flex', alignItems: 'center', gap: 12,
+      height: 56, flexShrink: 0, position: 'relative', zIndex: 50,
       borderBottom: '1px solid var(--color-border)',
-      background: 'color-mix(in srgb, var(--color-card) 80%, transparent)',
-      backdropFilter: 'blur(12px)',
-      padding: '0 20px',
+      background: 'var(--color-card)',
+      padding: '0 16px',
     }}>
       {/* ── Left: Logo + Board Name ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
-        <button onClick={() => navigate('/')}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-foreground)', padding: 0 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: 'linear-gradient(135deg, #6366F1, #A855F7)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Sparkles style={{ width: 14, height: 14, color: 'white' }} />
-          </div>
-          <span style={{ fontSize: 14, fontWeight: 700 }}>Aerix</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: '1 1 auto' }}>
+        <button onClick={() => navigate('/')} title="Back to home" aria-label="Back to home"
+          style={{ display: 'flex', alignItems: 'center', gap: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-foreground)', padding: 0, flexShrink: 0 }}>
+          <LogoMark size={28} />
         </button>
 
         <div style={{ width: 1, height: 20, background: 'var(--color-border)' }} />
@@ -246,7 +254,7 @@ export default function BoardNavbar({
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <input ref={titleInputRef} value={titleValue}
               onChange={e => setTitleValue(e.target.value)} onBlur={saveTitle}
-              onKeyDown={e => { if (e.key === 'Enter') saveTitle(); if (e.key === 'Escape') { setEditingTitle(false); setTitleValue(boardTitle) } }}
+              onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') { setEditingTitle(false); setTitleValue(boardTitle) } }}
               style={{ height: 30, width: 180, borderRadius: 8, border: '1px solid var(--color-accent)', background: 'var(--color-surface-1)', padding: '0 10px', fontSize: 13, fontWeight: 500, color: 'var(--color-foreground)', outline: 'none' }}
             />
             <button onClick={saveTitle} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-accent)', padding: 0, display: 'flex' }}>
@@ -255,18 +263,19 @@ export default function BoardNavbar({
           </div>
         ) : (
           <button onClick={() => setEditingTitle(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'var(--color-foreground)', padding: '4px 8px', borderRadius: 8, transition: 'all 0.2s' }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-muted)'; e.currentTarget.style.color = 'var(--color-accent)' }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = 'var(--color-foreground)' }}
+            title="Rename board"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, maxWidth: 260, background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--color-foreground)', padding: '6px 8px', borderRadius: 8, transition: 'background 0.2s' }}
+            onMouseEnter={e => { e.currentTarget.style.background = 'var(--color-muted)' }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'none' }}
           >
-            {titleValue}
-            <Pencil style={{ width: 12, height: 12, opacity: 0.4 }} />
+            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{titleValue}</span>
+            <Pencil style={{ width: 12, height: 12, opacity: 0.4, flexShrink: 0 }} />
           </button>
         )}
       </div>
 
       {/* ── Center: Active Users ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: -4, position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}>
+      <div className="board-nav-avatars" style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
         {navbarUsers.slice(0, 8).map((u, i) => (
           <div key={u.sessionId} style={{ position: 'relative', marginLeft: i > 0 ? -6 : 0, zIndex: navbarUsers.length - i }}>
             <button
@@ -312,7 +321,7 @@ export default function BoardNavbar({
       </div>
 
       {/* ── Right: Username + Share + Theme + Sidebar ── */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
         {/* Editable username */}
         {editingUsername ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -334,17 +343,17 @@ export default function BoardNavbar({
             onClick={() => setEditingUsername(true)} title="Click to change username"
             style={{
               display: 'flex', height: 34, alignItems: 'center', gap: 8,
-              borderRadius: 10, border: '1px solid var(--color-border)', padding: '0 12px',
+              borderRadius: 999, border: '1px solid var(--color-border)', padding: '0 12px 0 6px',
               background: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500,
               color: 'var(--color-muted-foreground)', transition: 'all 0.2s',
             }}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)'; e.currentTarget.style.color = 'var(--color-foreground)' }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--color-border-strong)'; e.currentTarget.style.color = 'var(--color-foreground)' }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-muted-foreground)' }}
           >
             <div style={{ width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8, fontWeight: 700, color: 'white', backgroundColor: socketService.color }}>
               {usernameValue.slice(0, 2).toUpperCase()}
             </div>
-            {usernameValue}
+            <span className="board-nav-label">{usernameValue}</span>
           </motion.button>
         )}
 
@@ -354,13 +363,13 @@ export default function BoardNavbar({
             title="Presentation mode"
             style={{
               display: 'flex', height: 34, alignItems: 'center', gap: 6,
-              borderRadius: 10, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-              background: presentationOpen ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.08)',
+              borderRadius: 999, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500,
+              background: presentationOpen ? 'var(--color-accent-soft)' : 'var(--color-muted)',
               color: presentationOpen ? 'var(--color-accent)' : 'var(--color-muted-foreground)',
             }}
           >
             <Presentation style={{ width: 14, height: 14 }} />
-            Present
+            <span className="board-nav-label">Present</span>
           </motion.button>
         )}
 
@@ -370,13 +379,13 @@ export default function BoardNavbar({
             title="Board security"
             style={{
               display: 'flex', height: 34, alignItems: 'center', gap: 6,
-              borderRadius: 10, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-              background: showSecurity || board?.isLocked ? 'rgba(99,102,241,0.2)' : 'rgba(99,102,241,0.08)',
+              borderRadius: 999, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500,
+              background: showSecurity || board?.isLocked ? 'var(--color-accent-soft)' : 'var(--color-muted)',
               color: board?.isLocked ? 'var(--color-accent)' : 'var(--color-muted-foreground)',
             }}
           >
             <Lock style={{ width: 14, height: 14 }} />
-            Security
+            <span className="board-nav-label">Security</span>
             <ChevronDown style={{ width: 14, height: 14, transition: 'transform 0.2s', transform: showSecurity ? 'rotate(180deg)' : 'none' }} />
             {board?.isLocked && (
               <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 5px', borderRadius: 4, background: 'rgba(239,68,68,0.15)', color: '#EF4444' }}>
@@ -390,7 +399,7 @@ export default function BoardNavbar({
               style={{
                 position: 'fixed', top: securityMenuPos.top, left: securityMenuPos.left, zIndex: 99999, width: 300,
                 borderRadius: 12, border: '1px solid var(--color-border)', background: 'var(--color-card)',
-                padding: 16, boxShadow: '0 12px 40px rgba(0,0,0,0.3)',
+                padding: 16, boxShadow: 'var(--shadow-xl)',
               }}
             >
               <p style={{ fontSize: 12, fontWeight: 700, marginBottom: 14 }}>Board security</p>
@@ -403,7 +412,7 @@ export default function BoardNavbar({
                   <button
                     type="button"
                     onClick={() => { void signInWithGoogle().catch(() => toast.error('Sign in failed')) }}
-                    style={{ borderRadius: 10, border: 'none', padding: '10px 16px', background: '#6366F1', color: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer', width: '100%' }}
+                    style={{ borderRadius: 10, border: 'none', padding: '10px 16px', background: 'var(--color-ink)', color: 'var(--color-ink-foreground)', fontSize: 12, fontWeight: 600, cursor: 'pointer', width: '100%' }}
                   >
                     Sign in with Google
                   </button>
@@ -419,7 +428,7 @@ export default function BoardNavbar({
               {canManageSecurity && (
                 <>
                   {!board?.ownerUid && (
-                    <p style={{ fontSize: 11, color: 'var(--color-accent)', marginBottom: 12, lineHeight: 1.4, padding: '8px 10px', borderRadius: 8, background: 'rgba(99,102,241,0.08)' }}>
+                    <p style={{ fontSize: 11, color: 'var(--color-accent)', marginBottom: 12, lineHeight: 1.4, padding: '8px 10px', borderRadius: 8, background: 'var(--color-muted)' }}>
                       No host yet — saving will make you the board host.
                     </p>
                   )}
@@ -436,7 +445,7 @@ export default function BoardNavbar({
                       onClick={() => { void toggleLockBoard() }}
                       style={{
                         width: 44, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer',
-                        background: isLocked ? '#6366F1' : 'var(--color-border)',
+                        background: isLocked ? 'var(--color-accent)' : 'var(--color-border-strong)',
                         position: 'relative', transition: 'background 0.2s',
                       }}
                     >
@@ -474,7 +483,7 @@ export default function BoardNavbar({
 
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button type="button" disabled={savingSecurity} onClick={() => { void saveSecurity() }}
-                      style={{ flex: 1, borderRadius: 8, border: 'none', padding: '8px 0', background: 'var(--color-accent)', color: 'white', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                      style={{ flex: 1, borderRadius: 8, border: 'none', padding: '8px 0', background: 'var(--color-ink)', color: 'var(--color-ink-foreground)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
                       Save
                     </button>
                     {board?.hasPassword && (
@@ -494,7 +503,7 @@ export default function BoardNavbar({
         {canManageSecurity && (
           <span style={{
             fontSize: 10, fontWeight: 700, padding: '4px 8px', borderRadius: 6,
-            background: 'rgba(99,102,241,0.12)', color: 'var(--color-accent)',
+            background: 'var(--color-accent-soft)', color: 'var(--color-accent)',
           }}>
             Host
           </span>
@@ -505,13 +514,13 @@ export default function BoardNavbar({
           title={board?.persistent ? 'Board is saved' : 'Save board permanently'}
           style={{
             display: 'flex', height: 34, alignItems: 'center', gap: 6,
-            borderRadius: 10, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-            background: board?.persistent ? 'rgba(16,185,129,0.15)' : 'rgba(99,102,241,0.08)',
-            color: board?.persistent ? '#10B981' : 'var(--color-muted-foreground)',
+            borderRadius: 999, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500,
+            background: board?.persistent ? 'color-mix(in srgb, var(--color-success) 14%, transparent)' : 'var(--color-muted)',
+            color: board?.persistent ? 'var(--color-success)' : 'var(--color-muted-foreground)',
           }}
         >
           <Bookmark style={{ width: 14, height: 14, fill: board?.persistent ? 'currentColor' : 'none' }} />
-          {board?.persistent ? 'Saved' : 'Save'}
+          <span className="board-nav-label">{board?.persistent ? 'Saved' : 'Save'}</span>
         </motion.button>
 
         {/* Record */}
@@ -519,29 +528,37 @@ export default function BoardNavbar({
           title={recording ? 'Stop recording' : 'Record canvas'}
           style={{
             display: 'flex', height: 34, alignItems: 'center', gap: 6,
-            borderRadius: 10, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-            background: recording ? 'rgba(239,68,68,0.15)' : 'rgba(99,102,241,0.08)',
+            borderRadius: 999, padding: '0 12px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 500,
+            background: recording ? 'rgba(239,68,68,0.15)' : 'var(--color-muted)',
             color: recording ? '#EF4444' : 'var(--color-muted-foreground)',
           }}
         >
           <Circle style={{ width: 10, height: 10, fill: recording ? '#EF4444' : 'none', color: recording ? '#EF4444' : 'currentColor' }} />
-          {recording ? formatRec(elapsed) : 'Rec'}
+          {recording ? formatRec(elapsed) : <span className="board-nav-label">Rec</span>}
         </motion.button>
 
+        {/* View-only badge */}
+        {myRole === 'viewer' && (
+          <span title="You can view, chat and join the call. Ask the host for edit access."
+            style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 700, padding: '6px 10px', borderRadius: 999, background: 'var(--color-accent-soft)', color: 'var(--color-accent)' }}>
+            <Eye style={{ width: 13, height: 13 }} /> View only
+          </span>
+        )}
+
         {/* Share */}
-        <motion.button whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={copyLink}
+        <motion.button ref={shareRef} whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} onClick={() => setShowShare((open) => !open)}
+          aria-expanded={showShare} aria-haspopup="dialog"
           style={{
             display: 'flex', height: 34, alignItems: 'center', gap: 6,
-            borderRadius: 10, background: 'rgba(99,102,241,0.1)', padding: '0 14px',
-            border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
-            color: 'var(--color-accent)', transition: 'all 0.2s',
+            borderRadius: 999, background: 'var(--color-ink)', padding: '0 16px',
+            border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500,
+            color: 'var(--color-ink-foreground)',
           }}
-          onMouseEnter={e => (e.currentTarget.style.background = 'rgba(99,102,241,0.2)')}
-          onMouseLeave={e => (e.currentTarget.style.background = 'rgba(99,102,241,0.1)')}
         >
           <Share2 style={{ width: 14, height: 14 }} />
           Share
         </motion.button>
+        {showShare && <SharePopover boardId={boardId} anchor={shareRef.current} onClose={() => setShowShare(false)} />}
 
         <ThemeToggle />
 
@@ -549,10 +566,10 @@ export default function BoardNavbar({
         <motion.button whileHover={{ scale: 1.06 }} whileTap={{ scale: 0.94 }} onClick={onToggleRightSidebar}
           style={{
             display: 'flex', width: 34, height: 34, alignItems: 'center', justifyContent: 'center',
-            borderRadius: 10, border: '1px solid var(--color-border)', background: 'none',
+            borderRadius: 999, border: '1px solid var(--color-border)', background: 'none',
             cursor: 'pointer', color: 'var(--color-muted-foreground)', transition: 'all 0.2s',
           }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(99,102,241,0.5)'; e.currentTarget.style.color = 'var(--color-foreground)' }}
+          onMouseEnter={e => { e.currentTarget.style.borderColor = 'var(--color-border-strong)'; e.currentTarget.style.color = 'var(--color-foreground)' }}
           onMouseLeave={e => { e.currentTarget.style.borderColor = 'var(--color-border)'; e.currentTarget.style.color = 'var(--color-muted-foreground)' }}
         >
           {rightSidebarOpen ? <PanelRightClose style={{ width: 16, height: 16 }} /> : <PanelRightOpen style={{ width: 16, height: 16 }} />}
